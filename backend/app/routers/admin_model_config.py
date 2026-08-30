@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends
 from app.core.deps import CurrentRidDep, SessionDep, require_admin
 from app.core.responses import ok
 from app.infrastructure.persistence.models import User
-from app.infrastructure.runtime import refresh_embedder_config
+from app.infrastructure.runtime import get_embedder_runtime, refresh_embedder_config
 from app.schemas.knowledge import EmbeddingConfigIn
 from app.services.model_config_service import ModelConfigService
 from app.services.rebuild_service import RebuildService
@@ -57,5 +57,8 @@ async def embedding_consistency(
     session: SessionDep, rid: CurrentRidDep, user: User = Depends(require_admin)
 ):
     """spec §8.7 步骤 4：比对配置里的模型与切片上记的模型，供启动/巡检告警。"""
-    warnings = await ModelConfigService(session).check_embedding_consistency()
+    current = get_embedder_runtime().current
+    warnings = await ModelConfigService(session).check_embedding_consistency(
+        current.model if current is not None else None
+    )
     return ok(warnings, request_id=rid)

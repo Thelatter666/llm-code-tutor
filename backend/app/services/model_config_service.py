@@ -11,8 +11,19 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ApiError
+from app.infrastructure.adapters.embedding.hashing_embed import HashingEmbed
+from app.infrastructure.adapters.embedding.openai_compat_embed import (
+    DEFAULT_OPENAI_EMBED_MODEL,
+)
+from app.infrastructure.adapters.embedding.sentence_transformer import (
+    DEFAULT_LOCAL_EMBED_MODEL,
+)
 from app.infrastructure.persistence.models import Chunk, KnowledgeBase
-from app.infrastructure.registry import get_or_create_singleton
+from app.infrastructure.registry import (
+    EMBEDDING_PROVIDER_HASHING,
+    EMBEDDING_PROVIDER_OPENAI,
+    get_or_create_singleton,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,13 +80,23 @@ class ModelConfigService:
         ).scalars().all()
         return [kb_id for kb_id in rows if kb_id]
 
-    async def check_embedding_consistency(self) -> list[dict[str, Any]]:
+    async def check_embedding_consistency(
+        self, expected_model: str | None = None
+    ) -> list[dict[str, Any]]:
         """spec §8.7 步骤 4：比对「配置里的模型」与「切片上记的模型」。
 
         不一致通常来自手动改库或改 `.env` 绕过 409 流程。这里只告警不自动修复 ——
         自动重建可能在无人值守时吃掉几分钟 CPU。
+
+        `expected_model` 为空时按配置解析出**实际会用的模型**：管理员从未显式配置过
+        embedding 模型是常态，此时 `embedding_model` 为 NULL，直接拿 NULL 去比对
+        会把「一切正常」误报成不一致。
         """
         cfg = await get_or_create_singleton(self._session)
+        if expected_model is None:
+            expected_model = cfg.embedding_model or default_embedding_model(
+                cfg.embedding_provider
+            )
         rows = (
             await self._session.execute(
                 select(Chunk.kb_id, Chunk.embed_model).distinct()
@@ -95,14 +116,23 @@ class ModelConfigService:
             if not kb_id or kb_id in seen:
                 continue
             seen.add(kb_id)
-            if indexed_model == cfg.embedding_model:
+            if indexed_model == expected_model:
                 continue
             warnings.append(
                 {
                     "kb_id": kb_id,
                     "kb_name": titles.get(kb_id, ""),
                     "indexed_model": indexed_model,
-                    "configured_model": cfg.embedding_model,
+                    "configured_model": expected_model,
                 }
             )
         return warnings
+
+
+def default_embedding_model(provider: str | None) -> str:
+    """未显式配置模型时，各 provider 实际会用的模型（与 registry.build_embedder 对齐）。"""
+    if provider == EMBEDDING_PROVIDER_OPENAI:
+        return DEFAULT_OPENAI_EMBED_MODEL
+    if provider == EMBEDDING_PROVIDER_HASHING:
+        return HashingEmbed.model
+    return DEFAULT_LOCAL_EMBED_MODEL

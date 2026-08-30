@@ -12,7 +12,8 @@ from app.core.errors import ApiError, install_exception_handlers
 from app.core.responses import install_request_id, ok
 from app.infrastructure.persistence.db import SessionFactory, init_db
 from app.infrastructure.runtime import get_embedder_runtime, refresh_embedder_config
-from app.routers import admin_knowledge, admin_model_config, auth as auth_router, knowledge
+from app.routers import admin_knowledge, admin_model_config, knowledge
+from app.routers import auth as auth_router
 from app.services.model_config_service import ModelConfigService
 
 logger = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ async def warmup_embedder() -> None:
     try:
         await get_embedder_runtime().warmup()
         logger.info("向量化器预热完成：%s", get_embedder_runtime().snapshot())
-    except Exception:  # noqa: BLE001 - 预热失败只告警，服务继续可用
+    except Exception:
         logger.exception("向量化器预热失败，知识库功能将降级")
 
 
@@ -42,7 +43,8 @@ async def lifespan(_app: FastAPI):
     async with SessionFactory() as session:
         await refresh_embedder_config(session)
         # spec §8.7 步骤 4：启动时校验「配置与索引不一致」并告警
-        for warning in await ModelConfigService(session).check_embedding_consistency():
+        complaints = await ModelConfigService(session).check_embedding_consistency()
+        for warning in complaints:
             logger.warning(
                 "知识库 %s 的索引模型与配置不一致：索引=%s 配置=%s，请执行重建",
                 warning["kb_id"],

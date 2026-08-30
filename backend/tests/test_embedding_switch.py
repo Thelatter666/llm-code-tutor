@@ -249,6 +249,25 @@ async def test_startup_consistency_check_reports_mismatch(session):
 
 
 @pytest.mark.asyncio
+async def test_no_false_positive_when_model_was_never_configured(session):
+    """管理员从未显式配置 embedding 模型是常态，此时不得误报不一致。"""
+    await _seed(session, chunks=1, model="paraphrase-multilingual-MiniLM-L12-v2")
+    await session.commit()  # ModelConfig 行不存在 → embedding_model 为 NULL
+
+    assert await _cfg_svc(session).check_embedding_consistency() == []
+
+
+@pytest.mark.asyncio
+async def test_expected_model_can_be_supplied_by_the_caller(session):
+    """就绪后由调用方传入运行时实际生效的模型，比按配置推断更准。"""
+    await _seed(session, chunks=1, model="hand-edited-model")
+    await session.commit()
+
+    warnings = await _cfg_svc(session).check_embedding_consistency("fake-1")
+    assert warnings and warnings[0]["configured_model"] == "fake-1"
+
+
+@pytest.mark.asyncio
 async def test_no_warning_when_consistent(session):
     await _seed(session, chunks=1, model=NEW_MODEL)
     session.add(
