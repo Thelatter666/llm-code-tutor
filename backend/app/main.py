@@ -1,3 +1,6 @@
+import asyncio
+import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, FastAPI
@@ -7,11 +10,51 @@ from fastapi.staticfiles import StaticFiles
 from app.core.deps import CurrentRidDep, require_admin
 from app.core.errors import ApiError, install_exception_handlers
 from app.core.responses import install_request_id, ok
+from app.infrastructure.persistence.db import SessionFactory, init_db
+from app.infrastructure.runtime import get_embedder_runtime, refresh_embedder_config
 from app.routers import admin_knowledge, admin_model_config, auth as auth_router, knowledge
+from app.services.model_config_service import ModelConfigService
+
+logger = logging.getLogger(__name__)
 
 DIST_DIR = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
-app = FastAPI(title="LLM Programming Tutor")
+
+async def warmup_embedder() -> None:
+    """异步后台预热向量化器（用户拍板决策 1）。
+
+    模型加载实测 13–20 秒，**不得**在启动路径上同步等待 —— 那样演示环境启动后会
+    长时间无响应。这里由 lifespan 用 `create_task` 拉起，服务立刻对外可用；
+    未就绪期间检索返回 5032（spec §9），/health 暴露就绪状态供前端提示。
+    """
+    try:
+        await get_embedder_runtime().warmup()
+        logger.info("向量化器预热完成：%s", get_embedder_runtime().snapshot())
+    except Exception:  # noqa: BLE001 - 预热失败只告警，服务继续可用
+        logger.exception("向量化器预热失败，知识库功能将降级")
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # 建表走 create_all，不做迁移（ADR-0006）
+    await init_db()
+
+    async with SessionFactory() as session:
+        await refresh_embedder_config(session)
+        # spec §8.7 步骤 4：启动时校验「配置与索引不一致」并告警
+        for warning in await ModelConfigService(session).check_embedding_consistency():
+            logger.warning(
+                "知识库 %s 的索引模型与配置不一致：索引=%s 配置=%s，请执行重建",
+                warning["kb_id"],
+                warning["indexed_model"],
+                warning["configured_model"],
+            )
+
+    asyncio.create_task(warmup_embedder())
+    yield
+
+
+app = FastAPI(title="LLM Programming Tutor", lifespan=lifespan)
 
 install_request_id(app)
 install_exception_handlers(app)
@@ -35,7 +78,11 @@ app.include_router(_admin)
 
 @app.get("/health")
 async def health(rid: CurrentRidDep):
-    return ok({"status": "ok"}, request_id=rid)
+    """健康检查；`embedder.ready` 即模型就绪状态（前端可据此显示「模型加载中」）。"""
+    return ok(
+        {"status": "ok", "embedder": get_embedder_runtime().snapshot()},
+        request_id=rid,
+    )
 
 
 def install_spa_fallback(app: FastAPI, dist: Path = DIST_DIR) -> None:
