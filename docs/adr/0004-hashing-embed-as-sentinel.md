@@ -11,5 +11,5 @@ Embedding 三级回退的最后一级 `HashingEmbed` 产生的是无语义向量
 
 ## Consequences
 
-- 无 API Key 且未装本地 embedding 时，知识库检索实际不可用。为降低影响，本地级 `sentence-transformers` 设为 optional extras 且 `make setup` 默认安装（见 spec §3.2 权衡 17）。
+- 无 API Key 且未装本地 embedding 时，知识库检索实际不可用。为降低影响，本地级 `sentence-transformers` 设为 optional extras 且 **`make install` 默认安装**（见 spec §3.2 权衡 17）；`make install-lite` 可跳过。
 - 该哨兵仍会执行索引写入，以保证「上传 → 切分 → 向量化 → 存储」整条链路可被演示。

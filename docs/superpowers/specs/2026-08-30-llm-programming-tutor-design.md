@@ -32,7 +32,7 @@
 | 向量存储 | Chroma 本地持久化目录 |
 | 进程模型 | **单进程单 worker（`--workers 1`）** |
 | LLM 接入 | Provider 抽象，OpenAI 兼容协议，内置 Mock 降级 |
-| Embedding | Provider 抽象，三级回退：OpenAI 兼容 → sentence-transformers（`paraphrase-multilingual-MiniLM-L12-v2`，384 维）→ HashingEmbed（**哨兵级，不参与检索**，见 §7.3）。本地级走 optional extras `[local-embed]`（含 torch，约 1GB），`make setup` 默认安装，`make setup-lite` 可跳过 |
+| Embedding | Provider 抽象，三级回退：OpenAI 兼容 → sentence-transformers（`paraphrase-multilingual-MiniLM-L12-v2`，384 维）→ HashingEmbed（**哨兵级，不参与检索**，见 §7.3）。本地级走 optional extras `[local-embed]`（含 torch，约 1GB），`make install` 默认安装，`make install-lite` 可跳过，另有 `make setup-local-embed` 供已装精简版后补装 |
 | 代码编辑与执行 | Monaco Editor + 后端 subprocess 受限执行器（无 Docker）。资源限制：psutil RSS 采样 + `RLIMIT_CPU` + 墙钟超时 + `RLIMIT_FSIZE`；**不使用 `RLIMIT_AS` / `RLIMIT_DATA` / `RLIMIT_RSS`**（macOS 不支持，见 §8.3） |
 | 支持语言 | Python、JavaScript |
 | 流式协议 | SSE |

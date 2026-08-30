@@ -84,7 +84,11 @@
 | 知识库锁 | KnowledgeBaseLock | per-`kb_id` 的 `asyncio.Lock`，保护索引 / 删除 / 重建 / GC | 检索**不持锁**，允许读到中间态 |
 | 课程代码 | CourseCode | `KnowledgeBase` 上的检索作用域标识，可空表示不限课程 | 与「课程」区分：本系统无课程实体与选课关系 |
 | API Key 掩码 | ApiKeyMask | 读取接口返回的密钥脱敏形式 `sk-****abcd` | 与「加密存储」区分：掩码面向展示，Fernet 面向落盘 |
-| 执行队列上限 | ExecutionQuota | 代码执行的全局并发上限（2）与信号量等待超时（10s） | 超限返回 `429`，不无限排队 |
+| 执行队列上限 | ExecutionQuota | 代码执行的全局并发上限（2）与信号量等待超时（10s）；知识库索引并发上限为 1 | 超限返回 `429`，不无限排队 |
+| 估算用量 | EstimatedUsage | Mock 提供方无真实 token 计数时按 `len(content)//4` 估算，并置 `usage_estimated=true` | 与「真实用量」区分：估算值仅供展示，不用于计费或限流判断 |
+| 随机补足 | RandomFill | 定向推荐数量不足 `limit` 时，按难度递增补足同课程随机题，响应标注 `filled_by=random` | 与「个性化推荐」区分：补足题不来自薄弱知识点画像 |
+| 文本增量 | TextDelta | LLM 流式输出的文本片段，与 `Usage`（用量）并列为流的两种消息类型 | 与「token」区分：增量是传输单位，token 是计量单位 |
+| 用量 | Usage | 单次 LLM 调用的 token 统计（prompt / completion / total），流的最后一个 chunk | 与「估算用量」区分：Usage 由提供方给出，估算用量由系统推算 |
 
 ---
 
