@@ -111,13 +111,27 @@
 ├──────────────────────────────────────────────────────┤
 │ 基础设施层 infrastructure/                             │
 │   ports/       LLMProvider · Embedder · VectorStore · │
+│                DocumentParser ·                       │
 │                CodeExecutor · CodeParser              │
 │   adapters/    OpenAICompat · SentenceTransformer ·   │
 │                HashingEmbed · ChromaStore ·          │
+│                PdfPlumber · PythonDocx · TextReader · │
 │                SubprocessSandbox · AstParser · Mock*  │
 │   persistence/ SQLAlchemy(SQLite) · Chroma 客户端      │
 └──────────────────────────────────────────────────────┘
 ```
+
+**端口清单**（P1 补记：原表遗漏了 RAG 链路所需的三个端口，均由
+`infrastructure/ports/` 定义 `Protocol`，服务层只依赖协议不依赖实现）：
+
+| 端口 | 职责 | 适配器 |
+|---|---|---|
+| `LLMProvider` | 对话与流式生成 | OpenAICompat、Mock |
+| `Embedder` | 文本 → 向量；暴露 `name` / `model` / `dimension` / `is_sentinel` | SentenceTransformer、OpenAICompat、HashingEmbed |
+| `VectorStore` | 向量 upsert / query / 删除；`query` 的 `kb_ids` **必填**（ADR-0007） | ChromaStore |
+| `DocumentParser` | 源文件 → 纯文本；无文字层的扫描版 PDF 抛 `EmptyDocumentError` | PdfPlumber、PythonDocx、TextReader |
+| `CodeExecutor` | 受控执行学生代码 | SubprocessSandbox |
+| `CodeParser` | 静态分析 | AstParser |
 
 ### 4.2 四条硬约束
 
@@ -169,7 +183,7 @@ llm-code-tutor/
 | **User** | username, email, hashed_password, role(student\|admin), status(active\|disabled), created_at, last_login_at |
 | **Conversation** | user_id, title, created_at, updated_at |
 | **Message** | conversation_id, role(user\|assistant\|system), content, citations(JSON), token_usage, model, provider, truncated, **anti_plagiarism_mode**, **blocked_by_policy(bool)**, created_at |
-| **KnowledgeBase** | name, description, owner_id, **course_code(可空)**, embed_provider, embed_model, created_at |
+| **KnowledgeBase** | name, description, owner_id, **course_code(可空)**, embed_provider, embed_model, **status(ready\|reindexing)**, created_at |
 | **Document** | kb_id, title, source_type(pdf\|md\|txt\|docx), source_uri, status(pending\|indexing\|ready\|failed\|reindexing), error_msg, **chunk_indexed**, **chunk_total**, created_at |
 | **Chunk** | document_id, kb_id, content, ordinal, char_count, meta(JSON), **embed_model**, vector_id |
 | **CodeSession** | user_id, language, source_code, title, created_at, updated_at |
@@ -180,6 +194,15 @@ llm-code-tutor/
 | **MistakeBookEntry** | user_id, exercise_id, wrong_count, consecutive_correct, last_wrong_answer, last_wrong_at, mastered, mastered_at —— 唯一约束 `(user_id, exercise_id)` |
 | **ModelConfig** | provider, base_url, **api_key_encrypted**（Fernet 密文，读取接口一律返回掩码）, model, temperature, top_p, max_tokens, embedding_provider, embedding_model, anti_plagiarism_mode(strict\|guided\|loose), score_threshold, top_k, revision, updated_by, updated_at —— 单例记录 |
 | **AuditLog** | user_id, action, target_type, target_id, detail(JSON), ip, request_id, created_at |
+
+**P1 补记**：
+
+- `KnowledgeBase.status`：§6.2（未就绪 → `5032`）与 §8.7（重建期间置 `reindexing`）
+  都要求知识库级状态，故补此列。**文档索引不改变知识库状态** —— §3.2 权衡 16 明确
+  「检索允许读到中间态」，只有全量重建才需要阻断检索。
+- `KnowledgeBase.embed_provider` / `embed_model`：记录**最近一次实际用于索引**的模型，
+  与 `ModelConfig.embedding_*`（配置的期望值）分列，两者不一致时由
+  `GET /admin/model-config/embedding-consistency` 告警（§8.7 步骤 4）。
 
 ### 5.1 判题三路
 
@@ -226,6 +249,8 @@ llm-code-tutor/
 | mistake | `GET /mistakes?mastered=` `DELETE /mistakes/{id}/mastered` `GET /mistakes/profile` `GET /mistakes/recommendations?limit=` | |
 | admin | `GET /admin/users?q=&role=&status=` `POST /admin/users` `PATCH /admin/users/{id}` `DELETE /admin/users/{id}` | |
 | admin | `GET/PUT /admin/model-config` `POST /admin/model-config/test` | test 返回 `{ok, latency_ms, sample}`；PUT 改 embedding 配置时可能返回 409 |
+| admin·embedding（P1 补记） | `PUT /admin/model-config/embedding` `{provider, model, confirm}` | §8.7 的入口。已有切片且 `confirm=false` → `409` + `{need_rebuild:true, knowledge_base_ids, from, to}`；确认后保存配置并**同步**触发全量重建，返回 `{rebuilt:[...], failed:[...]}`。**任一知识库重建失败即回滚配置**并抛 `5000` + `{rolled_back_to}` —— 否则会出现「新配置 + 旧维度向量」的静默零命中 |
+| admin·embedding（P1 补记） | `GET /admin/model-config/embedding-consistency` | §8.7 步骤 4：比对配置的模型与切片上记的模型，返回不一致清单。**只告警不自动修复**（自动重建可能在无人值守时吃掉几分钟 CPU） |
 | admin | `GET /admin/logs?action=&user_id=&start=&end=` `GET /admin/overview` `GET /admin/anti-plagiarism/stats` | overview 为仪表盘聚合；stats 返回各档位拦截率 |
 | system | `GET /health` | |
 
@@ -381,6 +406,17 @@ llm-code-tutor/
 2. 若存在 → 返回 **409 + `need_rebuild: true`**，前端弹二次确认
 3. 确认后自动触发 `rebuild-vector`，KB 置 `reindexing`，期间检索返回 `5032`
 4. `Chunk.embed_model` 字段记录实际索引所用模型，启动时校验「配置与索引不一致」并告警，防止手动改库或改 `.env` 绕过
+5. **切换与重建是一个「要么全成、要么回滚」的单元**：任一 KB 重建失败即把
+   `embedding_provider` / `embedding_model` 回滚到切换前，再自增一次 `revision`
+   让运行时缓存失效，并抛 `5000` + `{failed, rolled_back_to}`。
+
+   不回滚的后果是**静默零命中**：配置已指向新模型，查询于是拿新维度的向量去查
+   `course_chunks_d{新维度}` 集合，而该集合是空的（维度分区见 ADR-0007）——
+   学生端拿到空结果，既无错误码也无提示，降级完全不可见，违反 §9。
+
+6. 判定「重建是否成功」不能只看有没有抛异常：逐份文档的索引失败会被
+   `IndexingService` 各自吞掉并置 `status=failed`，于是**全部失败也会走成功分支**。
+   故按结果复核：仍残留旧模型切片、或重建后切片数为 0，都判为失败。
 
 ### 8.8 API Key 的加密存储
 
@@ -415,11 +451,17 @@ llm-code-tutor/
 | 代码命中黑名单 | `status=blocked`，返回命中规则名，不执行 |
 | 文档解析失败 | `status=failed` + `error_msg`，其余文档不受影响 |
 | 切换 embedding 且 KB 已有切片 | 返回 `409` + `need_rebuild: true`，二次确认后强制全量重建 |
+| 切换 embedding 后重建失败 | 回滚配置并抛 `5000` + `{failed, rolled_back_to}`。**不回滚则会静默零命中** —— 新模型的新维度向量去查空集合，学生端看不到任何异常 |
 | KB 处于 `reindexing` 期间检索 | 返回 `5032`，提示索引重建中 |
 | 检索指定 `kb_ids` 不存在 / 未就绪 | 不存在返回 `404`；未就绪返回 `5032` |
 | 未捕获异常 | 全局 handler → `{code:5000}` + request_id，隐藏堆栈 |
 
 **降级必须可见**：所有降级在响应中带 `degraded: true` 与 `fallback_reason`，前端展示提示条。
+
+**零命中亦属降级**：§7.2 步骤 7 的「零命中或命中被全部截断」同样置
+`degraded=true`，`fallback_reason="no_relevant_chunk"`。它与哨兵降级靠
+`fallback_reason` 区分 —— 前者是正常的「知识库里没有相关内容」，后者是
+`hashing_embed_no_semantics`，意味着检索结果无语义、不可信。两者都不可注入 prompt。
 
 ---
 
