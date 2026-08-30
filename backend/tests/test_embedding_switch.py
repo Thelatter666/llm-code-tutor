@@ -7,7 +7,10 @@ from app.infrastructure.adapters.embedding.sentence_transformer import (
     local_embed_available,
 )
 from app.infrastructure.adapters.vectorstore.chroma_store import ChromaVectorStore
-from app.infrastructure.embedder_runtime import EmbedderRuntime
+from app.infrastructure.embedder_runtime import (
+    EMBED_LEVEL_HASHING,
+    EmbedderRuntime,
+)
 from app.infrastructure.persistence.models import (
     Chunk,
     Document,
@@ -15,6 +18,7 @@ from app.infrastructure.persistence.models import (
     ModelConfig,
 )
 from app.infrastructure.ports.vectorstore import VectorRecord
+from app.infrastructure.registry import EMBEDDING_PROVIDER_HASHING
 from app.infrastructure.runtime import (
     get_embedder_runtime,
     refresh_embedder_config,
@@ -24,7 +28,13 @@ from app.services.indexing_service import IndexingService
 from app.services.model_config_service import ModelConfigService
 from app.services.rebuild_service import RebuildService
 from app.services.retrieval_service import RetrievalService
-from tests.fakes import BrokenEmbedder, ConstantEmbedder, FakeEmbedder, FakeVectorStore
+from tests.fakes import (
+    BrokenEmbedder,
+    ConstantEmbedder,
+    FakeEmbedder,
+    FakeVectorStore,
+    SentinelEmbedder,
+)
 
 OLD_MODEL = "old-model"
 NEW_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
@@ -397,6 +407,7 @@ async def test_failed_rebuild_rolls_back_the_embedding_config(session):
             model="hashing-256",
             confirm=True,
             rebuild=_exploding_rebuild,
+            runtime=_runtime(FakeEmbedder()),
         )
 
     assert exc.value.code == 5000
@@ -428,6 +439,7 @@ async def test_search_still_hits_after_a_rolled_back_switch(session):
             model="hashing-256",
             confirm=True,
             rebuild=_exploding_rebuild,
+            runtime=_runtime(FakeEmbedder()),
         )
 
     # 回滚的意义就在这一条：配置与切片回到同一个模型，不再错配。
@@ -447,6 +459,74 @@ async def test_search_still_hits_after_a_rolled_back_switch(session):
     assert result.rag_hit is True
     assert result.degraded is False
     assert result.citations
+
+
+@pytest.mark.asyncio
+async def test_switching_to_an_unavailable_model_is_refused_before_rebuilding(session):
+    """闸 1：新配置取不到可用向量化器 → 在动到任何向量之前就拒绝。
+
+    实测踩到的坑：填一个不存在的模型名，运行时一路降级到 HashingEmbed 哨兵，
+    于是一声不吭地把全部切片用无语义的哈希向量重写一遍，还返回「重建成功」——
+    好向量已被删掉，学生端只剩零命中，而 consistency 还查不出问题
+    （切片上记的确实是哨兵模型）。重建先删后建，开始就没有回头路，
+    所以必须在重建**之前**拦住。
+    """
+    await _seed_switchable(session, store=FakeVectorStore())
+
+    called: list[str] = []
+
+    async def _rebuild(kb_id):
+        called.append(kb_id)
+
+    # 只有哨兵级可用 —— 等价于「想要的那两级都取不到」
+    sentinel_only = EmbedderRuntime(
+        lambda level: SentinelEmbedder() if level == EMBED_LEVEL_HASHING else None
+    )
+    with pytest.raises(ApiError) as exc:
+        await _cfg_svc(session).switch_embedding_with_rebuild(
+            provider="sentence_transformers",
+            model="no-such-model",
+            confirm=True,
+            rebuild=_rebuild,
+            runtime=sentinel_only,
+        )
+
+    assert exc.value.code == 5000
+    assert exc.value.data["reason"] == "embedding_unavailable_falls_back_to_sentinel"
+    assert called == [], "必须在重建之前拦住，不能先删了向量再说不行"
+
+    cfg = (await session.execute(select(ModelConfig))).scalar_one()
+    assert cfg.embedding_model == OLD_MODEL
+
+
+@pytest.mark.asyncio
+async def test_explicitly_choosing_the_sentinel_is_not_refused(session):
+    """管理员显式选 hashing 时，哨兵就是他要的效果，不该被闸 1 拦下。
+
+    此时检索端会以 hashing_embed_no_semantics 显式降级，属于「可见降级」。
+    """
+    await _seed_switchable(session, store=FakeVectorStore())
+
+    rebuilt: list[str] = []
+
+    async def _rebuild(kb_id):
+        # 模拟一次真的重建：把切片上的模型名换成哨兵
+        for row in (await session.execute(select(Chunk))).scalars().all():
+            row.embed_model = SentinelEmbedder.model
+        await session.commit()
+        rebuilt.append(kb_id)
+
+    sentinel_only = EmbedderRuntime(
+        lambda level: SentinelEmbedder() if level == EMBED_LEVEL_HASHING else None
+    )
+    result = await _cfg_svc(session).switch_embedding_with_rebuild(
+        provider=EMBEDDING_PROVIDER_HASHING,
+        model=SentinelEmbedder.model,
+        confirm=True,
+        rebuild=_rebuild,
+        runtime=sentinel_only,
+    )
+    assert result["rebuilt"] == ["kb1"]
 
 
 @pytest.mark.asyncio
@@ -478,6 +558,7 @@ async def test_a_rebuild_that_converted_nothing_counts_as_failed(session, tmp_pa
             model="hashing-256",
             confirm=True,
             rebuild=_all_documents_fail,
+            runtime=_runtime(FakeEmbedder()),
         )
     assert exc.value.code == 5000
     assert exc.value.data["failed"] == ["kb1"]
@@ -504,7 +585,11 @@ async def test_successful_switch_reports_rebuilt_and_failed_lists(session, tmp_p
         ).rebuild(kb_id)
 
     result = await _cfg_svc(session).switch_embedding_with_rebuild(
-        provider="hashing", model="hashing-256", confirm=True, rebuild=_rebuild
+        provider="hashing",
+        model="hashing-256",
+        confirm=True,
+        rebuild=_rebuild,
+        runtime=_runtime(FakeEmbedder()),
     )
     assert result["rebuilt"] == ["kb1"]
     assert result["failed"] == []

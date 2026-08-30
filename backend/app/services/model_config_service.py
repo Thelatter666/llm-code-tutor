@@ -19,13 +19,14 @@ from app.infrastructure.adapters.embedding.openai_compat_embed import (
 from app.infrastructure.adapters.embedding.sentence_transformer import (
     DEFAULT_LOCAL_EMBED_MODEL,
 )
+from app.infrastructure.embedder_runtime import EmbedderRuntime
 from app.infrastructure.persistence.models import Chunk, KnowledgeBase
 from app.infrastructure.registry import (
     EMBEDDING_PROVIDER_HASHING,
     EMBEDDING_PROVIDER_OPENAI,
     get_or_create_singleton,
 )
-from app.infrastructure.runtime import refresh_embedder_config
+from app.infrastructure.runtime import get_embedder_runtime, refresh_embedder_config
 from app.services.rebuild_service import RebuildService
 
 logger = logging.getLogger(__name__)
@@ -86,8 +87,9 @@ class ModelConfigService:
         request_id: str | None = None,
         rebuild: Callable[[str], Awaitable[object]] | None = None,
         refresh_runtime: Callable[[], Awaitable[bool]] | None = None,
+        runtime: EmbedderRuntime | None = None,
     ) -> dict[str, Any]:
-        """切换 embedding 配置并强制全量重建；任一知识库重建失败则回滚配置。
+        """切换 embedding 配置并强制全量重建；**任何一步不成立就整体回滚配置**。
 
         **「配置 ↔ 向量维度」必须始终一致。** 若配置先落库而重建失败，查询会拿
         新模型产生的新维度向量去查 `course_chunks_d{新维度}` —— 该集合是空的
@@ -95,9 +97,21 @@ class ModelConfigService:
         `degraded` 之外的任何痕迹。这违反 spec §9 的「降级必须可见」：此处的降级
         对**学生端完全不可见**，管理员只有主动调 `embedding-consistency` 才发现。
 
-        因此切换与重建必须绑成一个「要么全成、要么回滚」的单元。
+        因此切换与重建必须绑成一个「要么全成、要么回滚」的单元。全流程有三道闸，
+        任一不过就回滚：
 
-        `rebuild` 可注入，便于测试直接构造失败路径。
+        1. **新配置是否真能取到可用的向量化器**（`_falls_back_to_sentinel`）
+        2. 重建是否抛异常
+        3. **重建是否真的换掉了切片**（`_rebuild_did_not_take_effect`）
+
+        第 1、3 道不是多余的保险，而是各挡住一类**实测踩到过的**静默失败：
+
+        - 填一个不存在的模型名，运行时会一路降级到 HashingEmbed 哨兵，于是一声不吭
+          地把全部切片用无语义的哈希向量重写一遍，还返回「重建成功」；
+        - 逐份文档的索引失败会被 `IndexingService._run` 各自吞掉并置 failed，
+          于是「全部失败」也不会抛异常。
+
+        `rebuild` / `refresh_runtime` / `runtime` 均可注入，便于测试构造这些路径。
         """
         cfg = await get_or_create_singleton(self._session)
         old = {"provider": cfg.embedding_provider, "model": cfg.embedding_model}
@@ -112,12 +126,30 @@ class ModelConfigService:
             request_id=request_id,
         )
         refresh = refresh_runtime or (lambda: refresh_embedder_config(self._session))
+        effective = runtime if runtime is not None else get_embedder_runtime()
         # 必须用新配置下的运行时去重建 —— 晚一步刷新就是在拿旧模型写新维度的切片
         await refresh()
 
         kb_ids = result["knowledge_base_ids"]
         if not (confirm and kb_ids):
             return {**result, "rebuilt": [], "failed": []}
+
+        # 闸 1：重建会先删旧向量，一旦开始就没有回头路，所以先确认新配置真能用
+        if await self._falls_back_to_sentinel(provider, model, effective):
+            await self._roll_back(old, refresh, effective)
+            raise ApiError(
+                5000,
+                f"配置的 embedding 模型不可用（{provider}/{model}），"
+                f"已回滚到切换前：{old['provider']}/{old['model']}",
+                data={
+                    "need_rebuild": True,
+                    "knowledge_base_ids": kb_ids,
+                    "rebuilt": [],
+                    "failed": kb_ids,
+                    "rolled_back_to": old,
+                    "reason": "embedding_unavailable_falls_back_to_sentinel",
+                },
+            )
 
         runner = rebuild or (
             lambda kb_id: RebuildService(self._session).rebuild(
@@ -127,24 +159,21 @@ class ModelConfigService:
         rebuilt: list[str] = []
         failed: list[str] = []
         for kb_id in kb_ids:
+            # 闸 2
             try:
                 await runner(kb_id)
             except Exception:
                 logger.exception("知识库重建失败 kb=%s", kb_id)
                 failed.append(kb_id)
                 continue
-            # rebuild() 不抛异常不等于重建成功：逐份文档的索引失败会被
-            # IndexingService._run 各自吞掉并置 failed，于是「全部失败」也会走
-            # 成功分支。这里按结果再验一次，不靠异常。
+            # 闸 3：不抛异常不等于重建成功，按结果再验一次
             if await self._rebuild_did_not_take_effect(kb_id, old_model):
                 failed.append(kb_id)
             else:
                 rebuilt.append(kb_id)
 
         if failed:
-            await self._restore_embedding(old)
-            # 回滚只改库不够：运行时还停在新模型上，等于回滚只做了一半
-            await refresh()
+            await self._roll_back(old, refresh, effective)
             raise ApiError(
                 5000,
                 f"以下知识库重建失败，已回滚 embedding 配置：{'、'.join(failed)}",
@@ -158,13 +187,44 @@ class ModelConfigService:
             )
         return {**result, "rebuilt": rebuilt, "failed": failed}
 
-    async def _restore_embedding(self, old: dict[str, Any]) -> None:
-        """把配置改回切换前，并再自增一次 revision 让运行时的缓存彻底失效。"""
+    async def _roll_back(
+        self,
+        old: dict[str, Any],
+        refresh: Callable[[], Awaitable[bool]],
+        runtime: EmbedderRuntime,
+    ) -> None:
+        """回滚配置并让运行时重新就绪。
+
+        只改库不够 —— 运行时还停在新模型上，等于回滚只做了一半；而
+        `refresh_embedder_config` 会把 `_ready` 置回 False，不重新预热的话
+        检索会一直返回 5032。三步缺一不可。
+        """
         cfg = await get_or_create_singleton(self._session)
         cfg.embedding_provider = old["provider"]
         cfg.embedding_model = old["model"]
+        # 再自增一次：revision 是运行时缓存的失效键
         cfg.revision += 1
         await self._session.commit()
+        await refresh()
+        await runtime.warmup()
+
+    async def _falls_back_to_sentinel(
+        self, provider: str, model: str, runtime: EmbedderRuntime
+    ) -> bool:
+        """新配置是否只能落到 HashingEmbed 哨兵。
+
+        哨兵**不是可用降级**（ADR-0004）：它的向量无语义，重建等于把好向量换成一堆
+        噪声，而响应还会说「重建成功」—— 学生端拿到的仍是零命中，且
+        `embedding-consistency` 看不出问题（切片上记的确实是哨兵模型）。
+
+        管理员显式选 hashing 是唯一例外：那时哨兵就是要的效果，且检索端会以
+        `hashing_embed_no_semantics` 显式降级，属于「可见降级」。
+        """
+        if provider == EMBEDDING_PROVIDER_HASHING or model == HashingEmbed.model:
+            return False
+        await runtime.warmup()
+        current = runtime.current
+        return current is not None and current.is_sentinel
 
     async def _rebuild_did_not_take_effect(self, kb_id: str, old_model: str) -> bool:
         """重建后是否仍残留旧模型的切片，或把知识库清空了。

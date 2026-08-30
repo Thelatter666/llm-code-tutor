@@ -528,32 +528,23 @@ async def test_failed_switch_returns_500_and_rolls_back_the_config(
         files=_upload("a.md", ("内容。" * 80).encode()),
         headers=_auth(admin),
     )
-    # 先成功切一次，作为回滚的基准
-    before = await client.put(
-        "/api/v1/admin/model-config/embedding",
-        json={"provider": "hashing", "model": "hashing-256", "confirm": True},
-        headers=_auth(admin),
-    )
-    assert before.json()["code"] == 0
 
-    # 第二次切换让重建炸掉 —— 只有这次要失败
     async def _explode(self, target_kb_id, **kwargs):
         raise RuntimeError("重建中途数据库不可用")
 
     monkeypatch.setattr(rebuild_service.RebuildService, "rebuild", _explode)
 
+    # 切到 hashing：provider 是 hashing 时不走「哨兵回退」那道闸，
+    # 于是这条用例锁定的就是「重建失败 → 回滚」这条路径本身。
     r = await client.put(
         "/api/v1/admin/model-config/embedding",
-        json={"provider": "sentence_transformers", "model": "new-model", "confirm": True},
+        json={"provider": "hashing", "model": "hashing-256", "confirm": True},
         headers=_auth(admin),
     )
     assert r.status_code == 500
     assert r.json()["code"] == 5000
     assert r.json()["data"]["failed"] == [kb_id]
-    assert r.json()["data"]["rolled_back_to"] == {
-        "provider": "hashing",
-        "model": "hashing-256",
-    }
+    assert r.json()["data"]["rolled_back_to"] == {"provider": None, "model": None}
 
     # 回滚必须真的落到库里，而不是只在响应里说一声
     from app.infrastructure.persistence.models import ModelConfig
@@ -561,8 +552,53 @@ async def test_failed_switch_returns_500_and_rolls_back_the_config(
     factory = async_sessionmaker(_engine, expire_on_commit=False)
     async with factory() as s:
         cfg = (await s.execute(select(ModelConfig))).scalar_one()
-    assert cfg.embedding_provider == "hashing"
-    assert cfg.embedding_model == "hashing-256"
+    assert cfg.embedding_provider is None
+    assert cfg.embedding_model is None
+
+
+@pytest.mark.asyncio
+async def test_switching_to_an_unavailable_model_is_refused_at_http_level(
+    client, _engine, monkeypatch
+):
+    """闸 1：配置取不到可用的向量化器 → 500 且配置不变，且**不碰**已有向量。
+
+    实测：填一个不存在的模型名，运行时会一路降级到 HashingEmbed 哨兵，于是一声
+    不吭地把全部切片用无语义的哈希向量重写一遍还返回成功 —— 好向量已被删掉，
+    学生端只剩零命中。重建先删后建，开始就没有回头路，必须在重建之前拦住。
+    """
+    from app.services import rebuild_service
+
+    admin = await _as_admin(client, _engine)
+    kb_id = await _make_kb(client, admin)
+    await client.post(
+        f"/api/v1/admin/knowledge/bases/{kb_id}/documents",
+        files=_upload("a.md", ("内容。" * 80).encode()),
+        headers=_auth(admin),
+    )
+
+    rebuilt: list[str] = []
+
+    async def _spy(self, target_kb_id, **kwargs):
+        rebuilt.append(target_kb_id)
+        return {"kb_id": target_kb_id, "status": "ready"}
+
+    monkeypatch.setattr(rebuild_service.RebuildService, "rebuild", _spy)
+
+    r = await client.put(
+        "/api/v1/admin/model-config/embedding",
+        json={
+            "provider": "sentence_transformers",
+            "model": "this-model-does-not-exist-xyz",
+            "confirm": True,
+        },
+        headers=_auth(admin),
+    )
+    assert r.status_code == 500
+    assert r.json()["code"] == 5000
+    assert (
+        r.json()["data"]["reason"] == "embedding_unavailable_falls_back_to_sentinel"
+    ), r.text
+    assert rebuilt == [], "必须在动到任何向量之前就拒绝"
 
 
 @pytest.mark.asyncio
