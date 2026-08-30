@@ -25,6 +25,7 @@ from app.domain.knowledge.status import (
     DOC_INDEXING,
     DOC_READY,
     DOC_REINDEXING,
+    KB_READY,
 )
 from app.infrastructure.adapters.document.parsers import parse_document
 from app.infrastructure.concurrency import index_slot, kb_lock
@@ -93,7 +94,7 @@ class IndexingService:
 
             kb = await session.get(KnowledgeBase, kb_id)
             if kb is not None:
-                kb.status = "ready"
+                kb.status = KB_READY
                 embedder = self._embedder.current
                 if embedder is not None:
                     kb.embed_provider = embedder.name

@@ -14,15 +14,24 @@ CODE_STATUS = {
 
 
 class ApiError(Exception):
-    def __init__(self, code: int, message: str, status: int | None = None):
+    def __init__(
+        self,
+        code: int,
+        message: str,
+        status: int | None = None,
+        *,
+        data: dict | None = None,
+    ):
         self.code = code
         self.message = message
         self.status = status or CODE_STATUS.get(code, 400)
+        # 错误也需要带结构化数据：如 §8.7 的 409 要回传 need_rebuild 与待重建清单
+        self.data = data
         super().__init__(message)
 
 
-def _payload(code: int, message: str, request_id: str) -> dict:
-    return {"code": code, "message": message, "data": None, "request_id": request_id}
+def _payload(code: int, message: str, request_id: str, data: dict | None = None) -> dict:
+    return {"code": code, "message": message, "data": data, "request_id": request_id}
 
 
 def install_exception_handlers(app: FastAPI) -> None:
@@ -30,7 +39,12 @@ def install_exception_handlers(app: FastAPI) -> None:
     async def _api_error(request: Request, exc: ApiError):
         return JSONResponse(
             status_code=exc.status,
-            content=_payload(exc.code, exc.message, getattr(request.state, "request_id", "")),
+            content=_payload(
+                exc.code,
+                exc.message,
+                getattr(request.state, "request_id", ""),
+                exc.data,
+            ),
         )
 
     @app.exception_handler(Exception)
