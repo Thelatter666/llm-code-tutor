@@ -7,7 +7,7 @@ TextDelta | Usage 的联合类型，而非裸 str。
 
 import asyncio
 from dataclasses import dataclass
-from typing import AsyncIterator, Protocol, Union
+from typing import AsyncIterator, Protocol, Union, runtime_checkable
 
 
 @dataclass(frozen=True)
@@ -55,7 +55,14 @@ class Completion:
     usage: Usage
 
 
+@runtime_checkable
 class LLMPort(Protocol):
+    """LLM 端口。
+
+    `@runtime_checkable` 是为了让契约测试能用 `isinstance` 断言端口符合性
+    （M4：Mock 与 OpenAICompat 必须跑同一组断言）。
+    """
+
     @property
     def name(self) -> str: ...
 
