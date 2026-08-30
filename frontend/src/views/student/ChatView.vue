@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import CitationList from '@/components/CitationList.vue'
 import DegradedBanner from '@/components/DegradedBanner.vue'
+import MarkdownView from '@/components/MarkdownView.vue'
 import * as chatApi from '@/api/chat'
 import * as kbApi from '@/api/knowledge'
 import { newRequestId, prefersReducedMotion } from '@/composables/useSse'
@@ -305,7 +306,11 @@ onUnmounted(stopTypewriter)
             <div v-if="b.typing && !b.content" class="typing" aria-label="正在生成">
               <span></span><span></span><span></span>
             </div>
-            <pre v-else-if="b.content" class="bubble__text">{{ b.content }}</pre>
+            <!-- AI 回答是 Markdown（经消毒渲染，见 MarkdownView）；学生消息保持纯文本 -->
+            <template v-else-if="b.content">
+              <MarkdownView v-if="b.role === 'assistant'" :content="b.content" />
+              <pre v-else class="bubble__text">{{ b.content }}</pre>
+            </template>
             <!-- 中断发生在一个增量都没吐出时：不给一个空气泡，明确说明发生了什么 -->
             <p v-else-if="b.truncated" class="bubble__interrupted">（已中断，未生成内容）</p>
 

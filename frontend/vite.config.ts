@@ -24,6 +24,9 @@ export default defineConfig({
         manualChunks: {
           vue: ['vue', 'vue-router', 'pinia'],
           'element-plus': ['element-plus', '@element-plus/icons-vue'],
+          // Markdown 渲染（markdown-it + DOMPurify + highlight.js）单独分包，
+          // 内容不常变，可与视图代码分开缓存
+          markdown: ['markdown-it', 'dompurify', 'highlight.js'],
         },
       },
     },
