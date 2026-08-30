@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     # 「停止」按钮有可截断的窗口；0 表示不限速。只作用于 Mock 的 stream()，
     # 不触碰 OpenAI 兼容链路，complete() 非流式调用也不引入延迟。
     mock_token_delay_ms: int = Field(default=30, ge=0)
+    # 代码执行并发上限（spec §3.2 权衡 14 / CONTEXT.md「执行队列上限」）
+    execution_concurrency: int = Field(default=2, ge=1)
+    # 拿不到执行位时等待多久就返回 429；**不无限排队**（spec §9）
+    execution_quota_timeout_s: float = Field(default=10.0, gt=0)
 
 
 @lru_cache

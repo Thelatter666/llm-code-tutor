@@ -13,7 +13,9 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.infrastructure.adapters.execution.subprocess_executor import SubprocessCodeExecutor
+from app.infrastructure.adapters.execution.subprocess_executor import (
+    SubprocessCodeExecutor,
+)
 from app.infrastructure.adapters.vectorstore.chroma_store import ChromaVectorStore
 from app.infrastructure.embedder_runtime import EmbedderRuntime
 from app.infrastructure.llm_runtime import LLMRuntime

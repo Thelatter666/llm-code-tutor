@@ -52,10 +52,10 @@ from app.domain.code.execution import (
     OUTPUT_LIMIT_BYTES,
     STATUS_ACCEPTED,
     STATUS_BLOCKED,
+    STATUS_FILENAME,
     STATUS_MEMORY_EXCEEDED,
     STATUS_RUNTIME_ERROR,
     STATUS_TIMEOUT,
-    STATUS_FILENAME,
     STDIN_FILENAME,
     WALL_TIMEOUT_S,
     build_command,
@@ -300,12 +300,27 @@ class SubprocessCodeExecutor:
         _write_bytes(script_path, source.encode("utf-8"))
         status_path = os.path.join(workdir, STATUS_FILENAME)
 
-        stdin_arg: object = subprocess.DEVNULL
         if stdin:
             stdin_path = os.path.join(workdir, STDIN_FILENAME)
             _write_bytes(stdin_path, stdin.encode("utf-8"))
-            stdin_arg = open(stdin_path, "rb")
+            # stdin 走文件而非管道：学生代码若不读它，父进程往管道写大块数据会死锁
+            with open(stdin_path, "rb") as stdin_file:
+                return self._spawn(
+                    workdir, language, script_path, status_path, stdin_file, started
+                )
+        return self._spawn(
+            workdir, language, script_path, status_path, subprocess.DEVNULL, started
+        )
 
+    def _spawn(
+        self,
+        workdir: str,
+        language: str,
+        script_path: str,
+        status_path: str,
+        stdin_arg: object,
+        started: float,
+    ) -> ExecutionResult:
         cmd = build_command(
             language=language,
             python_executable=self._python,
@@ -316,7 +331,8 @@ class SubprocessCodeExecutor:
             script_path=script_path,
             status_path=status_path,
         )
-        proc = subprocess.Popen(  # noqa: S603 — 命令由领域层装配，非用户拼接
+        # 命令由领域层装配（build_command），不含用户拼接的 shell 字符串
+        proc = subprocess.Popen(
             cmd,
             cwd=workdir,
             stdin=stdin_arg,
@@ -330,8 +346,7 @@ class SubprocessCodeExecutor:
         try:
             return self._pump(proc, status_path, started)
         finally:
-            if stdin_arg is not subprocess.DEVNULL:
-                stdin_arg.close()
+            # stdin 文件由调用方的 with 管着；这里只收管道
             for stream in (proc.stdout, proc.stderr):
                 if stream is not None:
                     stream.close()

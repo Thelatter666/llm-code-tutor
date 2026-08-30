@@ -36,7 +36,9 @@ from app.domain.code.execution import (
     STATUS_TIMEOUT,
     WALL_TIMEOUT_S,
 )
-from app.infrastructure.adapters.execution.subprocess_executor import SubprocessCodeExecutor
+from app.infrastructure.adapters.execution.subprocess_executor import (
+    SubprocessCodeExecutor,
+)
 from app.infrastructure.ports.code_executor import CodeExecutor
 
 PY = "python"

@@ -130,13 +130,15 @@ def test_no_zombie_children_after_a_batch_of_runs(executor):
         "import time\ntime.sleep(10)\n",
         "a = []\nwhile True:\n    a.append(1)\n",
         "raise ValueError('x')\n",
-        "import os, time\n"
-        "pid = os.fork()\n"
-        "if pid == 0:\n"
-        "    time.sleep(30)\n"
-        "    os._exit(0)\n"
-        "while True:\n"
-        "    time.sleep(0.1)\n",
+        (
+            "import os, time\n"
+            "pid = os.fork()\n"
+            "if pid == 0:\n"
+            "    time.sleep(30)\n"
+            "    os._exit(0)\n"
+            "while True:\n"
+            "    time.sleep(0.1)\n"
+        ),
     ]
     for src in sources:
         executor.execute(language=PY, source=src)

@@ -32,7 +32,6 @@ import io
 import re
 import tokenize
 from dataclasses import dataclass
-from typing import Optional
 
 from app.domain.code.analysis import LANGUAGE_JAVASCRIPT, LANGUAGE_PYTHON
 
@@ -169,7 +168,7 @@ def strip_noise(language: str, source: str) -> str:
             for tok in tokens
             if not _is_python_noise(tok.type) and tok.type not in _PY_LAYOUT
         ]
-    except Exception:
+    except Exception:  # noqa: BLE001 —— tokenize 对半截源码会抛各种错，一律回退
         # TokenError / IndentationError / SyntaxError 都可能：回退原始源码
         return source
     return " ".join(kept)
@@ -186,12 +185,12 @@ def strip_comments(language: str, source: str) -> str:
     try:
         tokens = tokenize.generate_tokens(io.StringIO(source).readline)
         kept = [tok.string for tok in tokens if tok.type != tokenize.COMMENT]
-    except Exception:
+    except Exception:  # noqa: BLE001 —— 同上，回退到原始源码
         return source
     return "".join(kept)
 
 
-def scan_blacklist(language: str, source: str) -> Optional[str]:
+def scan_blacklist(language: str, source: str) -> str | None:
     """返回命中的规则名；未命中返回 None。"""
     scanned: dict[str, str] = {}
     for rule in BLACKLIST_RULES:

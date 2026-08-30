@@ -10,6 +10,7 @@ import pytest
 
 from app.domain.code import execution as ex
 from app.domain.code.execution import (
+    ACTION_CODE_RUN,
     CPU_LIMIT_S,
     FILE_SIZE_LIMIT_BYTES,
     MEMORY_LIMIT_BYTES,
@@ -18,7 +19,6 @@ from app.domain.code.execution import (
     RUN_LANGUAGES,
     RUN_STATUSES,
     WALL_TIMEOUT_S,
-    ACTION_CODE_RUN,
     scan_blacklist,
 )
 
@@ -238,7 +238,8 @@ def test_sandbox_path_has_no_empty_entry():
 
 def test_domain_module_performs_no_io():
     """领域层禁止 IO：源码级断言，比 import 检查更难被绕过。"""
-    src = open(ex.__file__, encoding="utf-8").read()
+    with open(ex.__file__, encoding="utf-8") as fh:
+        src = fh.read()
     forbidden = r"^\s*(?:import|from)\s+(?:sqlalchemy|requests|httpx|psutil|subprocess|socket|pathlib|shutil)\b"
     assert re.search(forbidden, src, re.MULTILINE) is None
     assert "open(" not in src

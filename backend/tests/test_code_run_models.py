@@ -4,7 +4,7 @@
 与实测值。测试锁住的是「嵌套结构能原样往返」与「五种 status 都能落库」。
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 import pytest_asyncio
@@ -82,7 +82,6 @@ async def test_code_session_updated_at_advances_on_change(session, _rows):
 
 
 async def test_code_run_limit_detail_roundtrips_nested_dict(session, _rows):
-    _, run = _rows
     session.expunge_all()
     loaded = (await session.execute(select(CodeRun))).scalar_one()
     detail = loaded.limit_detail
@@ -141,7 +140,7 @@ async def test_created_at_carries_utc_timezone(session, _rows):
     draft, run = _rows
     for row in (draft, run):
         assert row.created_at.tzinfo is not None
-        assert row.created_at.utcoffset() == datetime.now(timezone.utc).utcoffset()
+        assert row.created_at.utcoffset() == datetime.now(UTC).utcoffset()
 
 
 async def test_code_run_is_indexed_by_user_id(engine):
