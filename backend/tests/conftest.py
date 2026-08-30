@@ -34,3 +34,19 @@ async def session(engine):
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with factory() as s:
         yield s
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _bind_session_factory(engine):
+    """把后台任务的会话工厂绑到测试库上。
+
+    索引由 BackgroundTasks 拉起，不能复用请求会话（响应返回时会话已关），
+    因此 IndexingService 会自行开新会话。默认工厂指向真实数据库文件，测试若不
+    替换就会静默写进 `data/app.db` —— 这类 bug 极难定位，故在此统一兜住。
+    """
+    from app.infrastructure.persistence import db as db_module
+
+    original = db_module.SessionFactory
+    db_module.SessionFactory = async_sessionmaker(engine, expire_on_commit=False)
+    yield
+    db_module.SessionFactory = original
