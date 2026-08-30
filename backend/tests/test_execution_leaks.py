@@ -53,6 +53,18 @@ def executor():
     return SubprocessCodeExecutor()
 
 
+# 负载缓解裁定（2026-08-31 用户确认）：泄漏/僵尸用例只关心「被内存层杀掉后清理是否
+# 成立」，用注入的 64MB 阈值即可证明同一行为；真实 256MB 阈值由
+# test_code_executor.py::test_memory_hog_is_killed_by_memory_layer 单独守住。
+MEMORY_LIMIT_INJECTED = 64 * 1024 * 1024
+MEMORY_HOG_SOURCE = "a = []\nwhile True:\n    a.append(1)\n"
+
+
+@pytest.fixture(scope="module")
+def small_memory_executor():
+    return SubprocessCodeExecutor(memory_limit_bytes=MEMORY_LIMIT_INJECTED)
+
+
 # ---------------------------------------------------------------- 四条路径
 
 def test_temp_dir_is_cleaned_after_success(executor):
@@ -71,11 +83,12 @@ def test_temp_dir_is_cleaned_after_wall_clock_timeout(executor):
     assert after == before, f"墙钟超时路径泄漏了 {after - before} 个临时目录"
 
 
-def test_temp_dir_is_cleaned_after_memory_kill(executor):
+def test_temp_dir_is_cleaned_after_memory_kill(small_memory_executor):
     before = len(_temp_dirs())
-    result = executor.execute(language=PY, source="a = []\nwhile True:\n    a.append(1)\n")
+    result = small_memory_executor.execute(language=PY, source=MEMORY_HOG_SOURCE)
     after = len(_temp_dirs())
     assert result.status == STATUS_MEMORY_EXCEEDED
+    assert result.limit_detail["memory"]["limit_bytes"] == MEMORY_LIMIT_INJECTED
     assert after == before, f"内存 kill 路径泄漏了 {after - before} 个临时目录"
 
 
@@ -123,12 +136,12 @@ def _zombies_owned_by_us() -> list[int]:
     return found
 
 
-def test_no_zombie_children_after_a_batch_of_runs(executor):
+def test_no_zombie_children_after_a_batch_of_runs(small_memory_executor):
     """批量执行（含被杀与派生孙进程的用例）后，不得留下已终止未回收的子进程。"""
     sources = [
         "print(1)\n",
         "import time\ntime.sleep(10)\n",
-        "a = []\nwhile True:\n    a.append(1)\n",
+        MEMORY_HOG_SOURCE,
         "raise ValueError('x')\n",
         (
             "import os, time\n"
@@ -141,7 +154,7 @@ def test_no_zombie_children_after_a_batch_of_runs(executor):
         ),
     ]
     for src in sources:
-        executor.execute(language=PY, source=src)
+        small_memory_executor.execute(language=PY, source=src)
 
     # 给内核回收留一个节拍
     time.sleep(0.5)

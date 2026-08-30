@@ -62,8 +62,42 @@ def test_adapter_satisfies_the_port_protocol(executor):
 
 # ---------------------------------------------------------------- 1. 内存
 
+def test_memory_threshold_is_injectable_and_honored():
+    """阈值注入（负载缓解裁定）：构造时传低阈值，采样与 limit_detail 都必须用它。
+
+    子进程只分配 24MB 就睡眠 —— 若阈值注入无效，默认 256MB 下它会正常跑完
+    （status=accepted），测试即失败。这条用例峰值不超过 ~40MB，把全量测试的
+    内存压力从「每个用例推到 292MB」降下来；真实 256MB 阈值的行为由
+    test_memory_hog_is_killed_by_memory_layer 单独守住。
+    """
+    injected = 16 * 1024 * 1024
+    small = SubprocessCodeExecutor(memory_limit_bytes=injected)
+    source = "b = bytearray(24 * 1024 * 1024)\nimport time\ntime.sleep(2)\n"
+    t0 = time.monotonic()
+    result = small.execute(language=PY, source=source)
+    elapsed = time.monotonic() - t0
+
+    assert result.status == STATUS_MEMORY_EXCEEDED
+    peak = _detail(result, "memory")["peak_bytes"]
+    assert injected < peak < MEMORY_LIMIT_BYTES, (
+        f"峰值应落在注入阈值与默认 256MB 之间，实测 {peak}"
+    )
+    assert _detail(result, "memory")["limit_bytes"] == injected
+    assert _detail(result, "memory")["triggered"] is True
+    assert result.exit_code == -signal.SIGKILL
+    assert elapsed < WALL_TIMEOUT_S, f"应被内存层提前杀掉，实测 {elapsed:.2f}s"
+    print(
+        f"\n[内存层·注入阈值] limit={injected // 1048576}MB peak={peak / 1048576:.1f}MB "
+        f"elapsed={elapsed:.2f}s exit_code={result.exit_code}"
+    )
+
+
 def test_memory_hog_is_killed_by_memory_layer(executor):
-    """spec §8.3：256MB RSS 上限由 psutil 轮询执行。"""
+    """spec §8.3：256MB RSS 上限由 psutil 轮询执行。
+
+    这是全套件里**唯一**用真实 256MB 阈值把子进程推满的用例（负载缓解裁定，
+    2026-08-31 用户确认）：其余内存行为用例一律用注入的低阈值验证同一行为。
+    """
     source = "a = []\nwhile True:\n    a.append(1)\n"
     t0 = time.monotonic()
     result = executor.execute(language=PY, source=source)

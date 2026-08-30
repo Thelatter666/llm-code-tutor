@@ -257,9 +257,14 @@ class SubprocessCodeExecutor:
         *,
         python_executable: str | None = None,
         node_executable: str | None = None,
+        memory_limit_bytes: int | None = None,
     ) -> None:
         self._python = python_executable or sys.executable
         self._node = node_executable or (shutil.which("node") or "node")
+        # 阈值可注入（负载缓解裁定，2026-08-31 用户确认）：生产行为不变 —— 缺省仍是
+        # 领域层常量 256MB；测试注入低阈值只改变采样比较与 limit_detail 的记录值，
+        # 不触碰任何其他限制层。
+        self._memory_limit = memory_limit_bytes or MEMORY_LIMIT_BYTES
 
     # ------------------------------------------------------------ 端口实现
 
@@ -384,7 +389,7 @@ class SubprocessCodeExecutor:
                 peak = max(peak, _sample_rss(proc.pid))
                 samples += 1
                 next_sample_at = samples * MEMORY_SAMPLE_INTERVAL_S
-            if peak > MEMORY_LIMIT_BYTES:
+            if peak > self._memory_limit:
                 memory_hit = True
                 break
 
@@ -504,7 +509,7 @@ class SubprocessCodeExecutor:
                 "triggered": measured.get("cpu_triggered", False),
             },
             "memory": {
-                "limit_bytes": MEMORY_LIMIT_BYTES,
+                "limit_bytes": self._memory_limit,
                 "sampled": executed,
                 "interval_ms": _SAMPLE_INTERVAL_MS,
                 "peak_bytes": measured.get("memory_peak", 0),
