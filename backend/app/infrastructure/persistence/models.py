@@ -1,7 +1,8 @@
 """全量表定义（spec §5 共 14 张）。
 
 P0 落 User / ModelConfig / AuditLog；P1 追加 KnowledgeBase / Document / Chunk；
-P2 追加 Conversation / Message。
+P2 追加 Conversation / Message；P3 追加 CodeAnalysis；
+P4 追加 CodeSession / CodeRun。
 建表走 create_all，不做迁移（ADR-0006）。
 """
 
@@ -201,4 +202,54 @@ class CodeAnalysis(Base):
     static_report: Mapped[dict] = mapped_column(JSON)
     # AI 报告可为 null（CONTEXT.md）；Mock 模式下由静态报告模板化生成（spec §8.4）
     ai_report: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_now, index=True)
+
+
+class CodeSession(Base):
+    """代码会话：在线编辑器中的一份代码草稿（CONTEXT.md）。
+
+    不使用「代码片段」「草稿」称之。与 CodeRun 的关系是「草稿 → 多次运行」，
+    但 spec §5 未要求外键，运行记录独立留存 —— 删草稿不该连带删掉运行历史。
+    """
+
+    __tablename__ = "code_sessions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    language: Mapped[str] = mapped_column(String)
+    source_code: Mapped[str] = mapped_column(Text, default="")
+    title: Mapped[str] = mapped_column(String, default="未命名草稿")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_now)
+    # 编辑器每次保存都推进它，供列表按最近编辑排序
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime, default=_now, onupdate=_now, index=True
+    )
+
+
+class CodeRun(Base):
+    """代码运行：一次代码执行的完整记录（spec §5 / §8.3）。
+
+    与「调试」区分：本系统只提供运行与输出观测，不提供断点调试。
+
+    `limit_detail` 是四层资源限制的**实测留痕**，不是配置回显：每层记录
+    `applied`（该层是否真的设上了）、`triggered`（本次是否被它杀掉）与实测值
+    （峰值 RSS、实际墙钟、截断与否）。平台不支持某层时 `applied=false` 并附
+    `error` —— 降级必须可见（spec §9）。
+    """
+
+    __tablename__ = "code_runs"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    language: Mapped[str] = mapped_column(String)
+    source_code: Mapped[str] = mapped_column(Text)
+    stdin: Mapped[str] = mapped_column(Text, default="")
+    # spec §5 的封闭取值：accepted | runtime_error | timeout | memory_exceeded | blocked
+    status: Mapped[str] = mapped_column(String)
+    stdout: Mapped[str] = mapped_column(Text, default="")
+    stderr: Mapped[str] = mapped_column(Text, default="")
+    # blocked 时代码根本没跑，exit_code 为 None
+    exit_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    limit_detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_now, index=True)

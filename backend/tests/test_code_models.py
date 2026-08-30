@@ -22,15 +22,19 @@ async def test_code_analysis_table_is_created(engine):
 
 
 @pytest.mark.asyncio
-async def test_code_session_and_code_run_tables_are_not_created(engine):
-    """边界：这两张表归 P4（在线编辑器批次），本批不得提前创建。"""
+async def test_code_session_and_code_run_tables_are_still_p4_owned(engine):
+    """边界守卫的原意是「P3 不得提前建 P4 的表」。
+
+    P4 已落地这两张表，守卫从「不存在」翻转为「存在但本批不写」——
+    P3 的 CodeService 仍然只写 CodeAnalysis，故此处只断言表已归 P4 所有，
+    字段与 limit_detail 的契约由 tests/test_code_run_models.py 覆盖。
+    """
     from sqlalchemy import text
 
     async with engine.connect() as conn:
         rows = await conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
     tables = {r[0] for r in rows}
-    assert "code_sessions" not in tables
-    assert "code_runs" not in tables
+    assert {"code_sessions", "code_runs"} <= tables
 
 
 @pytest.mark.asyncio
