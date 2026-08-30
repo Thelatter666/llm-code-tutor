@@ -511,6 +511,61 @@ async def test_embedding_switch_returns_409_then_confirmed_switch(client, _engin
 
 
 @pytest.mark.asyncio
+async def test_failed_switch_returns_500_and_rolls_back_the_config(
+    client, _engine, monkeypatch
+):
+    """重建失败必须抛业务错误码并回滚配置，不能静默返回 200。
+
+    静默成功意味着管理员以为切好了，学生端却拿新模型的维度去查空集合 ——
+    零命中且没有任何错误码，降级对学生端完全不可见（违反 spec §9）。
+    """
+    from app.services import rebuild_service
+
+    admin = await _as_admin(client, _engine)
+    kb_id = await _make_kb(client, admin)
+    await client.post(
+        f"/api/v1/admin/knowledge/bases/{kb_id}/documents",
+        files=_upload("a.md", ("内容。" * 80).encode()),
+        headers=_auth(admin),
+    )
+    # 先成功切一次，作为回滚的基准
+    before = await client.put(
+        "/api/v1/admin/model-config/embedding",
+        json={"provider": "hashing", "model": "hashing-256", "confirm": True},
+        headers=_auth(admin),
+    )
+    assert before.json()["code"] == 0
+
+    # 第二次切换让重建炸掉 —— 只有这次要失败
+    async def _explode(self, target_kb_id, **kwargs):
+        raise RuntimeError("重建中途数据库不可用")
+
+    monkeypatch.setattr(rebuild_service.RebuildService, "rebuild", _explode)
+
+    r = await client.put(
+        "/api/v1/admin/model-config/embedding",
+        json={"provider": "sentence_transformers", "model": "new-model", "confirm": True},
+        headers=_auth(admin),
+    )
+    assert r.status_code == 500
+    assert r.json()["code"] == 5000
+    assert r.json()["data"]["failed"] == [kb_id]
+    assert r.json()["data"]["rolled_back_to"] == {
+        "provider": "hashing",
+        "model": "hashing-256",
+    }
+
+    # 回滚必须真的落到库里，而不是只在响应里说一声
+    from app.infrastructure.persistence.models import ModelConfig
+
+    factory = async_sessionmaker(_engine, expire_on_commit=False)
+    async with factory() as s:
+        cfg = (await s.execute(select(ModelConfig))).scalar_one()
+    assert cfg.embedding_provider == "hashing"
+    assert cfg.embedding_model == "hashing-256"
+
+
+@pytest.mark.asyncio
 async def test_embedding_consistency_endpoint(client, _engine):
     admin = await _as_admin(client, _engine)
     r = await client.get(

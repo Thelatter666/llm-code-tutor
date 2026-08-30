@@ -14,14 +14,17 @@ from app.infrastructure.persistence.models import (
     KnowledgeBase,
     ModelConfig,
 )
+from app.infrastructure.ports.vectorstore import VectorRecord
 from app.infrastructure.runtime import (
     get_embedder_runtime,
     refresh_embedder_config,
     reset_runtime,
 )
+from app.services.indexing_service import IndexingService
 from app.services.model_config_service import ModelConfigService
 from app.services.rebuild_service import RebuildService
-from tests.fakes import FakeEmbedder, FakeVectorStore
+from app.services.retrieval_service import RetrievalService
+from tests.fakes import BrokenEmbedder, ConstantEmbedder, FakeEmbedder, FakeVectorStore
 
 OLD_MODEL = "old-model"
 NEW_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
@@ -342,6 +345,169 @@ async def test_rebuild_survives_a_dimension_change(session, tmp_path):
     session.expunge_all()
     rows = (await session.execute(select(Chunk))).scalars().all()
     assert rows and {r.embed_model for r in rows} == {"fake-8"}
+
+
+# --- 重建失败必须回滚配置（B1） ----------------------------------------------
+
+
+async def _exploding_rebuild(kb_id):
+    """模拟重建在逐份文档的错误边界之外失败（库写入失败、KB 状态写不回去等）。"""
+    raise RuntimeError("重建中途数据库不可用")
+
+
+async def _seed_switchable(session, *, store, chunks=2):
+    """建一个「已用 old-model 索引过、向量库里也确有向量」的知识库。
+
+    切片行与向量库的 vector_id 必须对齐 —— 检索要靠 Chunk 行把命中转成可溯源引用。
+    """
+    await _seed(session, chunks=chunks)
+    session.add(
+        ModelConfig(
+            id="singleton",
+            embedding_provider="sentence_transformers",
+            embedding_model=OLD_MODEL,
+            revision=2,
+        )
+    )
+    await session.commit()
+    for i in range(chunks):
+        store.records[f"v{i}"] = VectorRecord(
+            vector_id=f"v{i}",
+            kb_id="kb1",
+            document_id="d1",
+            embedding=[1.0, 0.0, 0.0, 0.0],
+            content=f"内容{i}",
+        )
+    return store
+
+
+@pytest.mark.asyncio
+async def test_failed_rebuild_rolls_back_the_embedding_config(session):
+    """B1 必测 1：重建失败 → provider/model 回滚，revision 再自增一次。
+
+    不回滚的话，配置指向新模型而切片还是旧维度，查询会去查空的
+    `course_chunks_d{新维度}` 集合，静默零命中 —— 降级对学生端完全不可见。
+    """
+    await _seed_switchable(session, store=FakeVectorStore())
+    before = (await session.execute(select(ModelConfig))).scalar_one().revision
+
+    with pytest.raises(ApiError) as exc:
+        await _cfg_svc(session).switch_embedding_with_rebuild(
+            provider="hashing",
+            model="hashing-256",
+            confirm=True,
+            rebuild=_exploding_rebuild,
+        )
+
+    assert exc.value.code == 5000
+    assert "kb1" in exc.value.message
+    assert exc.value.data["failed"] == ["kb1"]
+    assert exc.value.data["rolled_back_to"] == {
+        "provider": "sentence_transformers",
+        "model": OLD_MODEL,
+    }
+
+    cfg = (await session.execute(select(ModelConfig))).scalar_one()
+    assert cfg.embedding_provider == "sentence_transformers"
+    assert cfg.embedding_model == OLD_MODEL
+    assert cfg.revision == before + 2, "切换 +1、回滚 +1，保证运行时缓存失效"
+
+
+@pytest.mark.asyncio
+async def test_search_still_hits_after_a_rolled_back_switch(session):
+    """B1 必测 2：回滚后「旧配置 + 旧维度向量」自洽，检索照常命中。
+
+    这是回滚的意义所在 —— 宁可切换失败，也不能留下配置与向量维度错配的状态。
+    """
+    store = FakeVectorStore()
+    await _seed_switchable(session, store=store)
+
+    with pytest.raises(ApiError):
+        await _cfg_svc(session).switch_embedding_with_rebuild(
+            provider="hashing",
+            model="hashing-256",
+            confirm=True,
+            rebuild=_exploding_rebuild,
+        )
+
+    # 回滚的意义就在这一条：配置与切片回到同一个模型，不再错配。
+    # 不回滚的话这里会报出不一致 —— 那正是「新配置 + 旧维度向量」的静默不一致态。
+    session.expunge_all()
+    assert await _cfg_svc(session).check_embedding_consistency() == []
+
+    session.expunge_all()
+    runtime = EmbedderRuntime(
+        lambda level: ConstantEmbedder(dimension=4) if level == 1 else None
+    )
+    await runtime.warmup()
+    result = await RetrievalService(
+        session, embedder=runtime, vector_store=store
+    ).search("内容", kb_ids=["kb1"])
+
+    assert result.rag_hit is True
+    assert result.degraded is False
+    assert result.citations
+
+
+@pytest.mark.asyncio
+async def test_a_rebuild_that_converted_nothing_counts_as_failed(session, tmp_path):
+    """「全部文档索引失败」会被逐份文档的错误边界吞掉，rebuild() 不抛异常。
+
+    此时库里一片不剩，配置却已指向新模型 —— 与 B1 是同一类静默不一致，
+    因此按结果判定：进重建清单的知识库重建前必有切片，重建后为 0 即失败。
+    """
+    source = tmp_path / "a.txt"
+    source.write_text("重建用的正文内容。" * 60, encoding="utf-8")
+    await _seed_switchable(session, store=FakeVectorStore(), chunks=1)
+
+    async def _all_documents_fail(kb_id):
+        await RebuildService(
+            session,
+            embedder=_runtime(BrokenEmbedder()),
+            vector_store=FakeVectorStore(),
+            indexing=IndexingService(
+                session,
+                embedder=_runtime(BrokenEmbedder()),
+                vector_store=FakeVectorStore(),
+            ),
+        ).rebuild(kb_id)
+
+    with pytest.raises(ApiError) as exc:
+        await _cfg_svc(session).switch_embedding_with_rebuild(
+            provider="hashing",
+            model="hashing-256",
+            confirm=True,
+            rebuild=_all_documents_fail,
+        )
+    assert exc.value.code == 5000
+    assert exc.value.data["failed"] == ["kb1"]
+
+    cfg = (await session.execute(select(ModelConfig))).scalar_one()
+    assert cfg.embedding_model == OLD_MODEL
+
+
+@pytest.mark.asyncio
+async def test_successful_switch_reports_rebuilt_and_failed_lists(session, tmp_path):
+    """成功路径照常返回 rebuilt / failed 清单（M1：区分两者）。"""
+    source = tmp_path / "a.txt"
+    source.write_text("重建用的正文内容。" * 60, encoding="utf-8")
+    await _seed(session, chunks=1, with_text=source, tmp_path=tmp_path)
+
+    async def _rebuild(kb_id):
+        await RebuildService(
+            session,
+            embedder=_runtime(FakeEmbedder()),
+            vector_store=FakeVectorStore(),
+            indexing=IndexingService(
+                session, embedder=_runtime(FakeEmbedder()), vector_store=FakeVectorStore()
+            ),
+        ).rebuild(kb_id)
+
+    result = await _cfg_svc(session).switch_embedding_with_rebuild(
+        provider="hashing", model="hashing-256", confirm=True, rebuild=_rebuild
+    )
+    assert result["rebuilt"] == ["kb1"]
+    assert result["failed"] == []
 
 
 @pytest.mark.asyncio

@@ -13,7 +13,6 @@ from app.infrastructure.persistence.models import User
 from app.infrastructure.runtime import get_embedder_runtime, refresh_embedder_config
 from app.schemas.knowledge import EmbeddingConfigIn
 from app.services.model_config_service import ModelConfigService
-from app.services.rebuild_service import RebuildService
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
@@ -29,27 +28,26 @@ async def update_embedding(
 
     已有切片且未确认 → `409` + `need_rebuild: true`（spec §8.7 步骤 2），
     前端弹二次确认；确认后保存配置，并**同步触发全量重建**。
+
+    重建与切换是同一个单元：任一知识库重建失败就回滚配置（见
+    `ModelConfigService.switch_embedding_with_rebuild`）—— 否则查询会拿新模型的
+    新维度向量去查空的 `course_chunks_d{新维度}` 集合，静默零命中。
     """
-    result = await ModelConfigService(session).update_embedding(
-        provider=body.provider,
-        model=body.model,
-        confirm=body.confirm,
-        user_id=user.id,
-        request_id=rid,
-    )
-    await session.commit()
-
-    # 配置变更后必须换掉运行时的 factory，否则新模型永远不生效
-    await refresh_embedder_config(session)
-
-    rebuilt: list[str] = []
-    if body.confirm and result["knowledge_base_ids"]:
-        for kb_id in result["knowledge_base_ids"]:
-            await RebuildService(session).rebuild(kb_id, user_id=user.id, request_id=rid)
-            rebuilt.append(kb_id)
+    try:
+        result = await ModelConfigService(session).switch_embedding_with_rebuild(
+            provider=body.provider,
+            model=body.model,
+            confirm=body.confirm,
+            user_id=user.id,
+            request_id=rid,
+        )
         await session.commit()
+    finally:
+        # 成功与回滚都必须让运行时与库内配置一致：重建失败时上一步已把配置改回旧值，
+        # 不刷新的话运行时还停在新模型上，等于回滚只做了一半
+        await refresh_embedder_config(session)
 
-    return ok({**result, "rebuilt": rebuilt}, request_id=rid)
+    return ok(result, request_id=rid)
 
 
 @router.get("/model-config/embedding-consistency")
