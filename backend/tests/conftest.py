@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 # M5：用固定 env 注入测试密钥，避免写 .secret_key.test 文件污染工作区
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
-os.environ.setdefault("JWT_SECRET", "test-secret")
+os.environ.setdefault("JWT_SECRET", "test-secret-for-pytest-only-32bytes-min")
 os.environ.setdefault("APP_SECRET", Fernet.generate_key().decode())
 
 
