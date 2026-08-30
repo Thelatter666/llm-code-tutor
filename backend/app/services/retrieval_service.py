@@ -108,7 +108,15 @@ class RetrievalService:
         query_vector = (await self._embedder.embed([query]))[0]
 
         k = top_k or cfg.top_k or DEFAULT_TOP_K
-        raw_hits = await self._vectors.query(query_vector, top_k=k, kb_ids=target_ids)
+        # 向量库自身故障必须落到 5032（spec §9），不能漏成 5000 —— 审计 PR-2 实测：
+        # Chroma 持久目录损坏时此前直接抛裸异常，学生看到的是「服务器内部错误」。
+        try:
+            raw_hits = await self._vectors.query(query_vector, top_k=k, kb_ids=target_ids)
+        except ApiError:
+            raise
+        except Exception as exc:
+            logger.exception("向量库查询失败 kb_ids=%s", target_ids)
+            raise ApiError(5032, "知识库检索暂不可用，请稍后重试") from exc
 
         # ADR-0004：哨兵的产出不参与业务逻辑，连阈值判定都不必做
         if embedder.is_sentinel:
@@ -171,7 +179,10 @@ class RetrievalService:
                     raise ApiError(5032, "知识库正在重建索引，请稍后重试")
             return list(kb_ids)
 
-        stmt = select(KnowledgeBase.id)
+        # 默认作用域静默排除非 ready 的知识库：某库重建是秒级瞬态，不应让全站检索
+        # 因此 5032；显式指定 kb_ids 才返回 5032（spec §8.7）。审计 PR-4：
+        # 此前不带 kb_ids 会把重建中的库照常纳入作用域。
+        stmt = select(KnowledgeBase.id).where(KnowledgeBase.status == KB_READY)
         if course_code:
             stmt = stmt.where(KnowledgeBase.course_code == course_code)
         return list((await self._session.execute(stmt)).scalars().all())

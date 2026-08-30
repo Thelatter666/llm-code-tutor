@@ -98,7 +98,9 @@ def test_memory_hog_is_killed_by_memory_layer(executor):
     这是全套件里**唯一**用真实 256MB 阈值把子进程推满的用例（负载缓解裁定，
     2026-08-31 用户确认）：其余内存行为用例一律用注入的低阈值验证同一行为。
     """
-    source = "a = []\nwhile True:\n    a.append(1)\n"
+    # 一次性大块分配而非逐步增长：高负载下 CPU 3s 会先于内存触发，导致本用例
+    # 间歇性 flake（审计 PR-1）。分配是瞬时的，首个采样点即越过阈值，与负载无关。
+    source = "a = bytearray(300 * 1024 * 1024)\nimport time\ntime.sleep(30)\n"
     t0 = time.monotonic()
     result = executor.execute(language=PY, source=source)
     elapsed = time.monotonic() - t0

@@ -383,6 +383,26 @@ llm-code-tutor/
 
 4. **输出截断**：父进程读取管道时按 **8KB/流** 截断（`stdout`、`stderr` 各 8KB）。**不使用 `RLIMIT_FSIZE` 截断输出** —— stdout 是 pipe 不是 file，该限制对管道无效。
 5. 清理临时目录 → 落 `CodeRun`（含 `limit_detail`，记录各限制层是否生效）→ 写 `AuditLog`。
+6. **`stdin` 走临时文件重定向，不走管道写入** —— 学生代码若不读 `stdin`，父进程写大块数据会死锁。
+7. **响应语义**：`/code/run` 无论 `status` 是 `accepted` / `runtime_error` / `timeout` / `memory_exceeded` / `blocked`，HTTP 状态一律 **200** —— 执行结果是领域结果而非传输层故障，前端按 `status` 分支渲染（timeout / memory_exceeded 不应弹红色错误条）。
+8. **`limit_detail` 是实测留痕，不是配置回显**，结构固定如下（未执行时各层 `applied=false` 并注明原因，字段形状与执行路径保持一致）：
+
+```json
+{
+  "executed": true,
+  "error": null,
+  "blacklist": {"rule": null, "executed": false},
+  "wall_clock": {"limit_s": 5, "elapsed_s": 0.31, "triggered": false},
+  "cpu": {"limit_s": 3, "applied": true, "error": null, "triggered": false},
+  "memory": {"limit_bytes": 268435456, "sampled": true, "interval_ms": 100,
+             "peak_bytes": 134217728, "samples": 4, "triggered": false},
+  "file_size": {"limit_bytes": 1048576, "applied": true, "error": null},
+  "output": {"limit_bytes": 8192, "stdout_bytes": 45, "stderr_bytes": 0,
+             "stdout_truncated": false, "stderr_truncated": false}
+}
+```
+
+> 它是事后回答「这次运行到底哪层限制生效了」的唯一依据（P4 审阅明确要求），也是前端限制层展示表格的数据源。
 
 **并发与阻塞**：整段执行（含 psutil 轮询）为同步阻塞调用，经 `run_in_threadpool` 卸载到线程池；全局并发上限 **2**（信号量）。获取信号量超时（默认 10s）即返回 `429` + `retry_after`，**不无限排队**。
 

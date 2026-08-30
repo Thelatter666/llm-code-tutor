@@ -93,6 +93,37 @@ async def test_reindexing_kb_returns_5032(session):
 
 
 @pytest.mark.asyncio
+async def test_vector_store_failure_degrades_to_5032(session):
+    """审计 PR-2：向量库自身故障必须落到 5032（spec §9），不能漏成 5000。"""
+    await _mk_kb(session)
+
+    class Broken(FakeVectorStore):
+        async def query(self, embedding, top_k, kb_ids):
+            raise RuntimeError("chroma persistent dir corrupted")
+
+    with pytest.raises(ApiError) as exc:
+        await _search(session, Broken(), kb_ids=["kb1"])
+    assert exc.value.code == 5032
+    assert "检索" in exc.value.message
+
+
+@pytest.mark.asyncio
+async def test_default_scope_excludes_reindexing_kb(session):
+    """审计 PR-4：不带 kb_ids 的检索不得把重建中的库纳入作用域（spec §8.7）。
+
+    显式指定 kb_ids → 5032（上一条用例）；默认作用域 → 静默排除。
+    某库重建是秒级瞬态，不应让全站检索因此失败。
+    """
+    await _mk_kb(session, kb_id="kb-ok", status=KB_READY, chunks=1)
+    await _mk_kb(session, kb_id="kb-bad", status=KB_REINDEXING, chunks=1)
+
+    store = StubVectorStore([_hit("kb-ok-doc:0", kb_id="kb-ok")])
+    result = await _search(session, store)
+    assert result.rag_hit is True
+    assert all("kb-bad" not in call for call in store.calls)
+
+
+@pytest.mark.asyncio
 async def test_embedder_not_ready_returns_5032(session):
     """用户拍板决策 1：未就绪期间的检索请求返回 5032 并给出明确提示。"""
     await _mk_kb(session)
