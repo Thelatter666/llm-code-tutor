@@ -31,3 +31,6 @@ dist/
 .idea/
 .vscode/
 *.swp
+
+# 工具产物：由 `uipro init --ai codebuddy` 生成（约 4.8MB），可重现，不入库
+.codebuddy/
