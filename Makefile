@@ -30,8 +30,10 @@ serve:
 	@test -d $(FRONTEND)/dist || (echo "错误：frontend/dist 不存在，请先构建前端" && exit 1)
 	cd $(BACKEND) && $(PY) uvicorn app.main:app --workers 1 --port 8000
 
+# 后端 pytest 与前端 vitest 都要跑 —— 前端消毒测试若只存在于独立 runner 里会静默腐烂
 test:
 	cd $(BACKEND) && $(PY) python -m pytest -q
+	cd $(FRONTEND) && npm test
 
 seed:
 	cd $(BACKEND) && $(PY) python -m app.seed

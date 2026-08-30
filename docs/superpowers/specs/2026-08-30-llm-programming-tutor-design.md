@@ -187,7 +187,7 @@ llm-code-tutor/
 | **Document** | kb_id, title, source_type(pdf\|md\|txt\|docx), source_uri, status(pending\|indexing\|ready\|failed\|reindexing), error_msg, **chunk_indexed**, **chunk_total**, created_at |
 | **Chunk** | document_id, kb_id, content, ordinal, char_count, meta(JSON), **embed_model**, vector_id |
 | **CodeSession** | user_id, language, source_code, title, created_at, updated_at |
-| **CodeAnalysis** | user_id, language, source_hash, static_report(JSON), ai_report(JSON?), created_at |
+| **CodeAnalysis** | user_id, language, source_hash, static_report(JSON), ai_report(JSON?), created_at —— 唯一约束 `(user_id, language, source_hash)`；`source_hash = sha256(language + NUL + source)` |
 | **CodeRun** | user_id, language, source_code, stdin, status(accepted\|runtime_error\|timeout\|memory_exceeded\|blocked), stdout, stderr, exit_code, duration_ms, **limit_detail(JSON)**, created_at |
 | **Exercise** | type(choice\|multi\|blank\|short\|coding), stem, options(JSON?), answer(JSON), test_cases(JSON?), explanation, knowledge_tags(JSON), difficulty(1-5), source(seed\|admin\|ai), status(draft\|published), created_by, created_at |
 | **Submission** | user_id, exercise_id, answer(JSON), is_correct(bool?), score, judge_detail(JSON), feedback, attempt_no, created_at |
@@ -249,7 +249,7 @@ llm-code-tutor/
 | chat | `POST /chat/conversations/{id}/stop` `{request_id?}` | 服务端置 cancel flag；**幂等**，流已结束返回 `{cancelled: false}` 而非报错。`request_id` 缺省时取消该会话全部进行中的流 |
 | knowledge | `GET /knowledge/bases?course_code=` `GET /knowledge/search?query=&kb_ids=&course_code=&top_k=` | 学生侧只读；`course_code` 为空表示不限课程；**后端校验 kb 存在且 `status=ready`**（不存在 `404`，未就绪 `5032`） |
 | admin·kb | `POST/PATCH/DELETE /admin/knowledge/bases` `POST /admin/knowledge/bases/{id}/documents`（multipart） `GET /admin/knowledge/bases/{id}/documents?status=` `POST /admin/knowledge/documents/{id}/reindex` `DELETE /admin/knowledge/documents/{id}` `GET /admin/knowledge/documents/{id}/chunks` `POST /admin/knowledge/bases/{id}/rebuild-vector` `POST /admin/knowledge/bases/{id}/gc-orphan-vectors` | 切片预览服务答辩演示；gc 清理孤儿向量 |
-| code | `POST /code/analyze` `{language, source}` → `{static_report, ai_report, analysis_id}` | 评改意图，豁免防抄袭约束 |
+| code | `POST /code/analyze` `{language, source}` → `{static_report, ai_report, analysis_id, reused}` | 评改意图，豁免防抄袭约束；`reused=true` 表示命中历史、按用户复用了既有 `CodeAnalysis` |
 | code | `POST /code/run` `{language, source, stdin}` → `{status, stdout, stderr, exit_code, duration_ms, limit_detail, run_id}` | 5s 墙钟超时；经线程池卸载，并发上限 2，超出返回 `429` |
 | code | `GET/POST/PATCH/DELETE /code/sessions` `GET /code/runs` | 编辑器草稿与历史 |
 | exercise | `GET /exercises?type=&difficulty=&knowledge_tag=` `GET /exercises/{id}` `POST /exercises/{id}/submit` `POST /exercises/{id}/hint` `{intent: seek_answer\|review_my_code}` → SSE | intent **必填**，由前端入口按钮显式传入；`seek_answer` 受防抄袭档位约束，`review_my_code` 豁免 |
@@ -320,6 +320,15 @@ llm-code-tutor/
 - 对命中片段做**抽取式生成**：取片段首句 + 模板话术拼装，同样逐字流式吐出
 - 同样遵守防抄袭三档（strict 档输出固定引导话术）
 - 响应标记 `provider=mock`，前端角标提示"Mock 模式"
+- **`mock_token_delay_ms`（默认 30）**：每个 `TextDelta` 之间的间隔毫秒数，**只作用于 `MockLLMProvider.stream()`**，绝不触碰 OpenAI 兼容链路。
+
+  存在的理由：Mock 无网络往返，约 0.1s 即生成完毕，浏览器点「停止」几乎总是来不及截断，
+  无 API Key 演示时看不到任何流式效果，`/chat` 与 `/code/analyze` 的演示形同失效。
+  实测对照：同一答疑请求 165 个增量，默认 30ms 总耗时 5.21s，置 0 后 0.11s。
+
+  约束：`complete()` 是非流式调用，**不受该设置影响**。延迟会拖慢既有用例，
+  测试应在 conftest 中集中把该设置置 0，不得为提速而改动默认值。
+  Mock 判定的 `/code/analyze`（§8.4）不发起 LLM 调用，故也不叠加此延迟。
 
 ### 7.4 防抄袭效果度量
 
@@ -383,7 +392,13 @@ llm-code-tutor/
 
 静态解析产出 `static_report`（函数/类清单、圈复杂度、未使用变量、裸 `except`、行数统计）→ `source_hash` 命中历史则复用 → provider 可用时流式生成 `ai_report`；Mock 模式下 `ai_report` 由 `static_report` 模板化生成。
 
-**该流程固定为 `review_my_code` 意图，豁免防抄袭档位约束**（见 §7.1）。
+- **`ai_report` 为自描述 JSON**：`{content(Markdown), provider, model, token_usage, usage_estimated, degraded, fallback_reason}`。
+- **Mock 模式不发起 LLM 调用**：判定取配置层（`ModelConfig.provider`）而非运行时快照 —— 运行时快照在首次调用前为 `None` 不能作判定源；按配置判定可让 Mock 路径完全不走网络，因此也不叠加 §7.3 的 `mock_token_delay_ms` 延迟。
+- **复用按 user 隔离**：`ai_report` 可能因档位或模型不同而异，跨账号共享会让 B 学生看到 A 学生的历史讲解。唯一约束 `(user_id, language, source_hash)` 把「不重复算」落到库层。
+- **语法错误返回报告而非 4xx/500**：教学工具对写了一半的代码更要给反馈，行号 + 消息 + 行数统计照常产出，前端用 alert 呈现。
+- **JS 解析为轻量近似**（正则 + 花括号配对）：不识别字符串/正则字面量、方法清单靠行首模式匹配、不做语法校验。Python 走 `ast` 为精确实现。教学演示够用，**不可当 lint 工具宣传**。
+
+**该流程固定为 `review_my_code` 意图，豁免防抄袭档位约束**（见 §7.1）。但它**不做 RAG、不做底线检测**：RAG 按 §7.2 只服务答疑与习题辅导；底线检测的关键词规则在代码注释里误判率高。不过 `_floor.j2` 三条底线仍由 `code_review.j2` 无条件注入 —— 免的是档位，不是底线（§3.2 权衡 10）。
 
 ### 8.5 判题与错题归集
 
