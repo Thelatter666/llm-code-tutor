@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.core.deps import CurrentRidDep, require_admin
 from app.core.errors import ApiError, install_exception_handlers
+from app.core.logging import setup_logging
 from app.core.responses import install_request_id, ok
 from app.infrastructure.persistence.db import SessionFactory, init_db
 from app.infrastructure.runtime import get_embedder_runtime, refresh_embedder_config
@@ -19,6 +20,9 @@ from app.services.model_config_service import ModelConfigService
 logger = logging.getLogger(__name__)
 
 DIST_DIR = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+
+# 在任何可能产生日志的代码之前配置，保证启动阶段的日志格式一致
+setup_logging()
 
 
 async def warmup_embedder() -> None:
