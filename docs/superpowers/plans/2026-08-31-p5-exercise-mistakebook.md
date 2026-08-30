@@ -113,20 +113,20 @@ frontend/src/
 
 ## 3. 契约定稿（本批新增契约的实现口径；标注【待总指挥裁定】的六项不得先斩后奏）
 
-1. **【待总指挥裁定】admin 习题 CRUD 形态**：新建 `routers/admin_exercise.py`，前缀 `/api/v1/admin/exercises`（照 `admin_knowledge.py` 风格），五端点：
+1. **【已裁定 2026-08-31】admin 习题 CRUD 形态**：新建 `routers/admin_exercise.py`，前缀 `/api/v1/admin/exercises`（照 `admin_knowledge.py` 风格），五端点：
    - `POST /admin/exercises`：body 为 `{type, stem, options?, answer, test_cases?, explanation?, knowledge_tags, difficulty, status?="draft"}`；`source` 服务端固定写 `admin`，`created_by` 取当前管理员 id
    - `GET /admin/exercises?type=&difficulty=&knowledge_tag=&status=&page=&page_size=` → `{items, total}`（spec 分页约定）
    - `GET /admin/exercises/{id}`（含 draft，学生端看不到的这里看得到）
-   - `PATCH /admin/exercises/{id}`：全部字段可选更新（含 `status` 发布/下架）
+   - `PATCH /admin/exercises/{id}`：全部字段可选更新（含 `status` 发布/下架）；**schema 不含 `source` 且 `extra=forbid`** —— 传 `source` 或任何 schema 外未知字段一律 422 显式拒绝，不静默忽略（裁定 1 修订：静默忽略属「看起来成功实际没生效」的静默型失败）
    - `DELETE /admin/exercises/{id}`：**建议**手工级联删除该习题的 Submission 与 MistakeBookEntry（照 M-2 无 FK 现状的服务层手工序列，spec §8.9 用户硬删除同序），AuditLog detail 记录 `{submissions_deleted, mistake_entries_deleted}`；备选是存在 Submission 时 `4090` 拒绝。**计划采级联方案**，待裁定
    - 审计 action：`admin_exercise_create` / `admin_exercise_update` / `admin_exercise_delete`（对齐 `admin_kb_*` 命名族）
-   - `source` 语义闭环：`seed`（种子包写入，管理员不可改）、`admin`（CRUD 写入）、`ai`（预留枚举值，本批无写入入口）；CRUD 的 PATCH 不允许改 `source`
-2. **【待总指挥裁定】`DELETE /mistakes/{id}/mastered` 语义**：手动重置掌握度——`mastered=false`、`mastered_at=null`；**`consecutive_correct` 保留不清零**。理由：该端点的用途是「把已掌握的习题重新拉回练习」，最小变更原则下只撤销掌握标记；`consecutive_correct` 是学生真实作答的历史事实，清零等于篡改历史，且学生重置后再答对一次即可重新掌握（2 次阈值的计数仍连续），语义自然。`wrong_count` / `last_wrong_*` 同样保留（历史不可篡改）。路径中的 `{id}` 是 MistakeBookEntry.id，非本人条目一律 `4040`（不泄露存在性，照 `chat_service.get_conversation` 先例）。回写 spec §6.2
-3. **【待总指挥裁定】hint 请求体扩展**：`POST /exercises/{id}/hint` body = `{intent: "seek_answer"|"review_my_code", answer?}`。`answer` 承载学生当前作答（JSON，与 submit 的 answer 同形），`review_my_code` 时**必填**（Pydantic `model_validator` → FastAPI 422），`seek_answer` 时可缺省；`judging` 不对 HTTP 开放（内部意图）。缺省/非法 intent 由 Pydantic Literal 校验拒绝（422）。回写 spec §6.2
-4. **【待总指挥裁定】hint 的 `done` 载荷**（chat §6.1 的同源变体，无 Message 实体故无 `message_id`）：
+   - `source` 语义闭环：`seed`（种子包写入，管理员不可改）、`admin`（CRUD 写入）、`ai`（预留枚举值，本批无写入入口）；PATCH schema 不含 `source`，schema 外字段一律 422（见上）
+2. **【已裁定 2026-08-31】`DELETE /mistakes/{id}/mastered` 语义**：手动重置掌握度 = 开启新一轮练习周期——`mastered=false`、`mastered_at=null`、**`consecutive_correct=0`**；`wrong_count` 与 `last_wrong_answer/last_wrong_at` 保留不动。裁定理由：(a) 掌握度的定义是「连续 2 次答对」，跨周期的旧连对不应计入新一轮的「连续」；(b) 若保留计数，重置后答对 1 次即重新掌握，「重置掌握度」按钮形同虚设——静默型语义失效，违反本特性初衷；(c) 不可篡改的历史是 `wrong_count` 与 `last_wrong_*`（都保留），`consecutive_correct` 是状态机状态而非历史，清零不是篡改。路径中的 `{id}` 是 MistakeBookEntry.id，非本人条目一律 `4040`（不泄露存在性，照 `chat_service.get_conversation` 先例）。回写 spec §6.2
+3. **【已裁定 2026-08-31】hint 请求体扩展**：`POST /exercises/{id}/hint` body = `{intent: "seek_answer"|"review_my_code", answer?}`。`answer` 承载学生当前作答（JSON，与 submit 的 answer 同形），`review_my_code` 时**必填**（Pydantic `model_validator` → FastAPI 422），`seek_answer` 时可缺省；`judging` 不对 HTTP 开放（内部意图）。缺省/非法 intent 由 Pydantic Literal 校验拒绝（422）。回写 spec §6.2
+4. **【已裁定 2026-08-31】hint 的 `done` 载荷**（chat §6.1 的同源变体，无 Message 实体故无 `message_id`）：
    `{exercise_id, intent, token_usage, usage_estimated, model, provider, rag_hit, degraded, fallback_reason}` —— 保留 chat done 的全部降级/用量语义（`degraded` 取检索与提供方的或、`fallback_reason` 检索优先），仅以 `exercise_id + intent` 替代 `message_id`。回写 spec §6.2
-5. **【待总指挥裁定】简答题 AI 评分 prompt 形态**：**不走 PromptAssembler**，由领域层 `domain/exercise/short_scoring.py` 构建 `[system, user]` 两条消息。理由：`PromptAssembler.TEMPLATES` 的四套主模板面向学生辅导，经 `_system.j2` 无条件注入防抄袭档位与底线内容，会污染要求严格 JSON 输出的判分调用；判分是内部调用（Judging 意图完全豁免，spec §7.1），不面向学生输出。system 要求模型只输出 JSON `{score: 0-100, is_correct: bool, feedback: string}`；user 含题干 / 参考答案 / 解析 / 学生作答。**Mock 模式判定取配置层（同 P3 §8.4 口径：`cfg.provider` 非真提供方即 Mock）**，不发起 LLM 调用，改用确定性启发式评分（学生作答与参考答案+解析的字符二元组重合度 → 映射 0-100），`judge_detail.judge_mode="mock_heuristic"`、`ai_scored=true` 照记。真提供方 JSON 解析失败 → `ApiError(5021)`：**不落 Submission、不入错题本**（把「模型故障」记成「学生答错」比丢一次提交更糟）。硬规则：模型给出 `is_correct` 但 `score<60` 时强制 `is_correct=false`（spec §5.1「得分 <60 视为错误」）。回写 spec §5.1 / §7
-6. **【待总指挥裁定】种子幂等策略**：Exercise 无自然键，采用 **uuid5 确定性主键**——`uuid5(uuid.NAMESPACE_URL, "llm-code-tutor:exercise:<slug>")`，slug 在种子数据中显式给定（如 `py-choice-01`）。写入前按主键查存在即跳过（不覆盖，与 admin/ModelConfig 的「已存在则跳过」语义一致）。不引入 spec §5 之外的新列，幂等判定落在主键确定性上。回写 spec §4.3
+5. **【已裁定 2026-08-31】简答题 AI 评分 prompt 形态**：**不走 PromptAssembler**，由领域层 `domain/exercise/short_scoring.py` 构建 `[system, user]` 两条消息。理由：`PromptAssembler.TEMPLATES` 的四套主模板面向学生辅导，经 `_system.j2` 无条件注入防抄袭档位与底线内容，会污染要求严格 JSON 输出的判分调用；判分是内部调用（Judging 意图完全豁免，spec §7.1），不面向学生输出。system 要求模型只输出 JSON `{score: 0-100, is_correct: bool, feedback: string}`；user 含题干 / 参考答案 / 解析 / 学生作答。**Mock 模式判定取配置层（同 P3 §8.4 口径：`cfg.provider` 非真提供方即 Mock）**，不发起 LLM 调用，改用确定性启发式评分（学生作答与参考答案+解析的字符二元组重合度 → 映射 0-100），`judge_detail.judge_mode="mock_heuristic"`、`ai_scored=true` 照记。真提供方 JSON 解析失败 → `ApiError(5021)`：**不落 Submission、不入错题本**（把「模型故障」记成「学生答错」比丢一次提交更糟）。硬规则：模型给出 `is_correct` 但 `score<60` 时强制 `is_correct=false`（spec §5.1「得分 <60 视为错误」）。**前端「AI 参考评分」标识必须区分 judge_mode**：`model` → 「AI 参考评分」、`mock_heuristic` → 「AI 参考评分（Mock 启发式）」——Mock 可接受但降级必须可见（红线，裁定 5 修订）。回写 spec §5.1 / §7
+6. **【已裁定 2026-08-31】种子幂等策略**：Exercise 无自然键，采用 **uuid5 确定性主键**——`uuid5(uuid.NAMESPACE_URL, "llm-code-tutor:exercise:<slug>")`，slug 在种子数据中显式给定（如 `py-choice-01`）。写入前按主键查存在即跳过（不覆盖，与 admin/ModelConfig 的「已存在则跳过」语义一致）。不引入 spec §5 之外的新列，幂等判定落在主键确定性上。回写 spec §4.3
 7. **answer / test_cases 的 JSON 形态**（spec §5 只写了 JSON，此处定稿并回写 spec §5）：
    - `choice`：`answer="B"`（选项键）；`options={"A": "文本", "B": "文本", ...}`
    - `multi`：`answer=["A","C"]`（键数组，种子内排序存储）；`options` 同上
@@ -344,7 +344,7 @@ frontend/src/
 | profile：两题同 tag 聚合 SUM(wrong_count)；已掌握条目排除；按 wrong_count 降序 | WeakKnowledgePoint | §8.5 |
 | recommendations：薄弱 tag 命中的题在前、难度升序；不足 limit 补随机且 **filled_by="random" 标注**（变异测试目标）、画像题 filled_by="profile" | RandomFill | §8.5 |
 | recommendations 排除已掌握习题；无错题时全随机补足且全部标 random | 边界 | §8.5 |
-| reset_mastered：mastered=True → 重置 False/null，consecutive_correct 与 wrong_count 保留（变异测试目标）；他人条目 → 4040 | 契约定稿 2 | §6.2 |
+| reset_mastered：mastered=True → 重置 False/null、**consecutive_correct=0**（变异测试目标），wrong_count 与 last_wrong_* 保留；他人条目 → 4040 | 契约定稿 2 | §6.2 |
 
 - [ ] **Step 2–4: 失败 → 实现 → 通过**
 - [ ] **Step 5: 全量测试 → Commit** `feat(backend): MistakeBookService——错题条目/薄弱画像/定向推荐与 RandomFill/手动重置掌握（spec §8.5）`
@@ -424,7 +424,7 @@ frontend/src/
 | POST 创建：source 强制 admin（body 传 seed/ai 也落 admin）、created_by=管理员 id、status 缺省 draft | 契约定稿 1 |
 | POST 校验：multi 缺 options → 422；answer 键不在 options → 422；coding 缺 test_cases → 422；difficulty=6 → 422 | 写入校验 |
 | GET 分页 `{items, total}` 与 status/type 过滤 | §6.2 分页约定 |
-| PATCH：改 status draft→published 后学生端可见（联动 Task 7 语义）；PATCH 传 source → 422 或忽略（以实现为准，测试锁定行为） | 发布流 |
+| PATCH：改 status draft→published 后学生端可见（联动 Task 7 语义）；PATCH 传 source（或任何 schema 外字段）→ **422 显式拒绝**（`extra=forbid`，不静默忽略） | 发布流 / 裁定 1 修订 |
 | DELETE：级联删 Submission 与 MistakeBookEntry；AuditLog detail 计数；习题不存在 → 4040 | 手工级联（M-2 口径） |
 | 三个审计 action 落库 | 命名族 |
 
@@ -491,7 +491,7 @@ frontend/src/
 
 **Files:** Create `frontend/src/api/exercise.ts`、`frontend/src/types/exercise.ts`、`frontend/src/views/student/ExerciseView.vue`；Modify `frontend/src/router/index.ts`（`/exercises` 懒加载）、`frontend/src/components/AppShell.vue`（导航项「习题练习」）
 
-> **spec §6.2 / §5.1 / §9 + design baseline**：列表（筛选 type/difficulty/knowledge_tag，tag 下拉数据来自 `facets.knowledge_tags`）→ 作答面板（choice 单选 / multi 多选 / blank 输入 / short 文本域 / coding 复用 `CodeEditor` 组件）→ 提交 → 判分结果（分数、正确/错误、judge_detail 用例表格、正确答案/解析折叠面板）→ **hint 双入口按钮**（「获取思路」=seek_answer /「批改我的作答」=review_my_code，后者有作答内容才可用）→ SSE 流式渲染（复用 `readSseStream` + `MarkdownView` + `CitationList` + `DegradedBanner`）→ 简答题结果带「AI 参考评分」标识（`ai_scored` 驱动）。SSE 中断用 `AbortController`（无 stop 端点，仅前端停止渲染）。沿用 CSS 变量/间距/圆角，路由懒加载。
+> **spec §6.2 / §5.1 / §9 + design baseline**：列表（筛选 type/difficulty/knowledge_tag，tag 下拉数据来自 `facets.knowledge_tags`）→ 作答面板（choice 单选 / multi 多选 / blank 输入 / short 文本域 / coding 复用 `CodeEditor` 组件）→ 提交 → 判分结果（分数、正确/错误、judge_detail 用例表格、正确答案/解析折叠面板）→ **hint 双入口按钮**（「获取思路」=seek_answer /「批改我的作答」=review_my_code，后者有作答内容才可用）→ SSE 流式渲染（复用 `readSseStream` + `MarkdownView` + `CitationList` + `DegradedBanner`）→ 简答题结果带「AI 参考评分」标识，**按 judge_mode 区分**：`model` → 「AI 参考评分」、`mock_heuristic` → 「AI 参考评分（Mock 启发式）」（`ai_scored` + `judge_detail.judge_mode` 驱动；Mock 可接受但降级必须可见——裁定 5 修订）。SSE 中断用 `AbortController`（无 stop 端点，仅前端停止渲染）。沿用 CSS 变量/间距/圆角，路由懒加载。
 
 - [ ] **Step 1: types + api 模块（listExercises / getExercise / submitExercise / streamHint）**
 - [ ] **Step 2: 页面组件 → 路由与导航**
@@ -525,9 +525,9 @@ frontend/src/
   4. `mistake_service.py` 推荐删掉 `filled_by` 标注 → RandomFill 用例失败
   5. `exercise_service.py` stream_hint 把 review_my_code 的 resolve_mode 强制按 seek_answer 处理 → 豁免差异用例失败
   6. `seeds/exercises.py` 删掉主键存在性检查 → 幂等用例失败
-  7. 附带：学生端列表去掉 published 过滤 → 可见性用例失败；reset_mastered 保留行为改成清零 consecutive_correct → 对应用例失败
+  7. 附带：学生端列表去掉 published 过滤 → 可见性用例失败；reset_mastered 重置时**保留 consecutive_correct（不清零）** → 对应用例失败
 - [ ] **Step 3: 真服务冒烟实测**（`uvicorn --workers 1`）：种子 40 题、列表筛选、choice 提交判分、coding 提交判分（含 judge_detail 用例表）、short Mock 评分、hint 双入口 SSE（seek_answer 档位话术 vs review_my_code 豁免）、错题本画像/推荐/重置掌握
-- [ ] **Step 4: 完成报告（含端到端实测结果、变异测试记录、测试基线增量、未验证项）→ Commit** `docs: P5 完成报告（含判题实测、变异测试记录与 spec 回写）`
+- [ ] **Step 4: 完成报告（含端到端实测结果、变异测试记录、测试基线增量、未验证项；限制声明须列入「hint 中断依赖客户端断连（无 /stop 端点）」与 H-1 负载敏感性）→ Commit** `docs: P5 完成报告（含判题实测、变异测试记录与 spec 回写）`
 
 ---
 
@@ -566,20 +566,20 @@ frontend/src/
 7. **hint 无 /stop 端点**：spec 未定义，中断靠前端断连；4990 机制保留同构，如总指挥认为需要 stop 端点可作为追加项裁定
 8. **conftest 既有约定**：所有新测试走既有 fixtures（engine/session），禁止引入联网依赖
 
-## 8. 待总指挥裁定的问题清单（六项正式 + 四项随回写确认）
+## 8. 问题清单（2026-08-31 总指挥裁定：六项正式 + 四项随回写确认全部通过；#1、#2、#5 含修订）
 
-| # | 问题 | 本计划方案 | 备选 |
+| # | 问题 | 裁定结果 | 备注 |
 |---|---|---|---|
-| 1 | admin CRUD 形态 | `/api/v1/admin/exercises` 五端点；DELETE 级联删 Submission + 错题条目并留审计 | DELETE 遇 Submission 时 4090 拒绝 |
-| 2 | DELETE mastered 语义 | 重置 mastered/mastered_at；consecutive_correct 保留（最小变更、不篡改历史） | 连 consecutive_correct 一并清零（重置后需再连对 2 次） |
-| 3 | hint 请求体 | `{intent, answer?}`；review_my_code 必填 answer（422）；answer 与 submit 同形 | 独立字段拆分（answer/code 两字段） |
-| 4 | hint done 载荷 | `{exercise_id, intent, token_usage, usage_estimated, model, provider, rag_hit, degraded, fallback_reason}` | 另加 submission_id（若要求 hint 关联最近一次提交） |
-| 5 | 简答评分 prompt | 领域层构建不走 PromptAssembler；Mock 启发式评分；解析失败 5021 不落库 | 注册新模板进 TEMPLATES；或 Mock 也走 LLM 链路 |
-| 6 | 种子幂等 | uuid5 确定性主键 + 存在即跳过 | stem+type 内容哈希查询判定；或新增 slug 列（需改 spec §5） |
-| 7 | coding 执行语言归属 | `test_cases.language`（学生只交 source） | Exercise 加 language 列（需改 spec §5） |
-| 8 | multi 空作答 | 0 分 / is_correct=false，不算漏选 | 视为漏选给 50（不建议：不答得 50） |
-| 9 | GET /exercises 分页 | page/page_size → `{items, total}` + facets | 不分页返回全量 |
-| 10 | hint 是否需要 /stop 端点 | 本批不加，断连即中断 | 追加 `POST /exercises/{id}/hint/stop` |
+| 1 | admin CRUD 形态 | `/api/v1/admin/exercises` 五端点；DELETE 级联删 Submission + 错题条目并留审计；**PATCH 未知字段（含 source）一律 422，不静默忽略** | 修订：`extra=forbid` |
+| 2 | DELETE mastered 语义 | `mastered=false`、`mastered_at=null`、**`consecutive_correct=0`**；`wrong_count` 与 `last_wrong_*` 保留 | 改采清零方案，理由见契约定稿 2 |
+| 3 | hint 请求体 | `{intent, answer?}`；review_my_code 必填 answer（422）；与 submit 同形；judging 不对 HTTP 开放 | 批准 |
+| 4 | hint done 载荷 | 九字段（`exercise_id` + `intent` 替代 `message_id`）；不加 submission_id | 批准 |
+| 5 | 简答评分 prompt | 领域层构建不走 PromptAssembler；Mock 配置层判定 + 确定性启发式；解析失败 5021 不落库；score<60 强制 False；**前端标识区分 judge_mode** | 修订：降级可见红线 |
+| 6 | 种子幂等 | uuid5 确定性主键 + 存在即跳过，不加新列 | 批准 |
+| 7 | coding 执行语言归属 | `test_cases.language`（学生只交 source） | 批准 |
+| 8 | multi 空作答 | 0 分 / is_correct=false，不算漏选；spec §5.1 回写时消除「∅ 是数学意义上的真子集」歧义 | 批准 |
+| 9 | GET /exercises 分页 | page/page_size → `{items, total}` + facets.knowledge_tags，按最小集超集惯例回写 §6.2 | 批准 |
+| 10 | hint /stop 端点 | 本批不加；断连（AbortController）即中断，per-call cancel Event 与 4990 检查保留同构；完成报告列入限制声明 | 批准 |
 
 ## 9. 验收清单（P5 完成标准）
 
@@ -591,6 +591,6 @@ frontend/src/
 - [ ] 错题本：画像聚合排除已掌握；推荐 top-3 薄弱 tag → 难度升序 → RandomFill 标注可见；手动重置掌握可用
 - [ ] `backend/seeds/` 落地；`make seed` 幂等行为不变；40 题五题型齐备；coding 种子自校验通过
 - [ ] `count_actions` 死代码删除；FakeExecutor 契约测试与真执行器同组断言通过（M4 收口）
-- [ ] 前端两页上线：`npm test` 通过、`vue-tsc --noEmit` 零错误、`vite build` 通过、路由懒加载、DegradedBanner/MarkdownView 复用、「AI 参考评分」与「随机补足」标注可见
+- [ ] 前端两页上线：`npm test` 通过、`vue-tsc --noEmit` 零错误、`vite build` 通过、路由懒加载、DegradedBanner/MarkdownView 复用；「AI 参考评分」按 judge_mode 区分标注（model / Mock 启发式）与「随机补足」标注可见
 - [ ] spec 回写 11 条全部落档；完成报告含真实实测数字、变异测试记录与未验证项
 - [ ] 全程零远端操作、零 merge；commit 按 Task 粒度、全部在 `feat/p5-exercise-mistakebook`
