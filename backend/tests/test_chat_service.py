@@ -1,11 +1,14 @@
 """ChatService：SSE 编排、落库、中断与审计（spec §8.1）。"""
 
+import asyncio
+
 import pytest
 from sqlalchemy import select
 
 from app.domain.chat.policy import DEFAULT_CONVERSATION_TITLE, MODE_STRICT
 from app.infrastructure.cancellation import CancellationRegistry
 from app.infrastructure.persistence.models import AuditLog, Conversation, Message
+from app.infrastructure.ports.llm import TextDelta, Usage
 from app.infrastructure.registry import get_or_create_singleton
 from app.infrastructure.sse import (
     CANCELLED_CODE,
@@ -122,6 +125,47 @@ async def test_token_usage_comes_from_the_stream_tail(session, cancels):
     assert done["token_usage"]["completion_tokens"] == len("一二三四五六七八") // 4
     assert done["usage_estimated"] is True  # 估算用量 EstimatedUsage
     assert sum(len(e.data["delta"]) for e in events if e.event == EVENT_TOKEN) == 8
+
+
+class FixedUsageLLM(FakeLLM):
+    """流末给出与文本长度**无关**的用量，用于证伪「用量是按文本长度现算的」。"""
+
+    async def stream(self, messages, params, *, cancel=None):
+        self.messages.append(list(messages))
+        for ch in self.reply:
+            if cancel is not None and cancel.is_set():
+                break
+            yield TextDelta(ch)
+            await asyncio.sleep(0)
+        yield Usage(prompt_tokens=1111, completion_tokens=2222, total_tokens=3333, estimated=False)
+
+
+@pytest.mark.asyncio
+async def test_token_usage_is_taken_verbatim_from_the_stream_tail(session, cancels):
+    """拍板决策 4：用量必须来自流末的 Usage 元素。
+
+    Mock 的估算值恰好等于 `len(text)//4`，只断言 completion_tokens 无法区分
+    「取了 Usage」与「按文本现算」—— 故这里让替身给出一个与长度无关的固定值。
+    """
+    svc = ChatService(
+        session,
+        llm=fake_llm_runtime(FixedUsageLLM(reply="随便一段回答")),
+        retrieval=FakeRetrieval(),
+        cancels=cancels,
+    )
+    conv = await _conversation(session)
+
+    events = await _collect(
+        svc.stream_reply(conv.id, QUESTION, user_id="u1", request_id="r1", use_rag=False)
+    )
+    done = events[-1].data
+
+    assert done["token_usage"] == {
+        "prompt_tokens": 1111,
+        "completion_tokens": 2222,
+        "total_tokens": 3333,
+    }
+    assert done["usage_estimated"] is False
 
 
 @pytest.mark.asyncio

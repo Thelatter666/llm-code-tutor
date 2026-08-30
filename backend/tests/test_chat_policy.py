@@ -75,6 +75,18 @@ def test_mentioning_homework_alone_does_not_hit_the_floor():
     assert detect_floor_violation("作业里这道排序题的思路是什么？") is None
 
 
+def test_mentioning_exam_without_being_in_one_does_not_hit_the_floor():
+    """「考试怎么复习」不是在线作答，不能记成底线拦截。
+
+    判定要求「考试/竞赛」与「正在/现在/在线」**两组各命中一个**。若退化成单词
+    匹配，所有提到考试的正常提问都会被计入分子，拦截率这个度量口径就被污染了
+    —— 而它本来就不是检测能力，唯一的价值就是可复现地统计，污染后一文不值。
+    """
+    assert detect_floor_violation("期末考试怎么复习？重点有哪些") is None
+    assert detect_floor_violation("竞赛题一般怎么训练") is None
+    assert detect_floor_violation("机考环境怎么配置") is None
+
+
 def test_audit_action_constant():
     """spec §8.1：AuditLog(action=chat)。"""
     assert ACTION_CHAT == "chat"
