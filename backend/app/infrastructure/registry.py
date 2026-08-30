@@ -2,10 +2,31 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import decrypt_api_key
+from app.infrastructure.adapters.embedding.hashing_embed import HashingEmbed
+from app.infrastructure.adapters.embedding.openai_compat_embed import (
+    DEFAULT_OPENAI_EMBED_MODEL,
+    OpenAICompatEmbedder,
+)
+from app.infrastructure.adapters.embedding.sentence_transformer import (
+    DEFAULT_LOCAL_EMBED_MODEL,
+    SentenceTransformerEmbedder,
+    local_embed_available,
+)
 from app.infrastructure.adapters.llm.mock_provider import MockLLMProvider
 from app.infrastructure.adapters.llm.openai_compat import OpenAICompatProvider
+from app.infrastructure.embedder_runtime import (
+    EMBED_LEVEL_HASHING,
+    EMBED_LEVEL_LOCAL,
+    EMBED_LEVEL_OPENAI,
+)
 from app.infrastructure.persistence.models import MODEL_CONFIG_SINGLETON_ID, ModelConfig
+from app.infrastructure.ports.embedding import Embedder
 from app.infrastructure.ports.llm import LLMPort
+
+# 显式声明 embedding 配置取值（spec §5 ModelConfig）
+EMBEDDING_PROVIDER_OPENAI = "openai_compat"
+EMBEDDING_PROVIDER_LOCAL = "sentence_transformers"
+EMBEDDING_PROVIDER_HASHING = "hashing"
 
 
 async def get_or_create_singleton(session: AsyncSession) -> ModelConfig:
@@ -49,3 +70,38 @@ class ProviderRegistry:
                 api_key=decrypt_api_key(cfg.api_key_encrypted),
             )
         return MockLLMProvider()
+
+
+def build_embedder(cfg: ModelConfig, level: int) -> Embedder | None:
+    """构建**指定级别**的向量化器；该级不可用时返回 None，由 EmbedderRuntime 降级。
+
+    三级回退（spec §9 / ADR-0004）：
+      0 = OpenAI 兼容 API  ·  1 = sentence-transformers 本地  ·  2 = HashingEmbed 哨兵
+
+    这里刻意采用「精确级别」而非「该级及以下最优」语义：降级链的选择权归
+    EmbedderRuntime，本函数只回答「第 N 级现在能不能用」。
+    """
+    if level == EMBED_LEVEL_OPENAI:
+        if cfg.embedding_provider == EMBEDDING_PROVIDER_OPENAI and cfg.api_key_encrypted:
+            return OpenAICompatEmbedder(
+                base_url=cfg.base_url or "",
+                api_key=decrypt_api_key(cfg.api_key_encrypted),
+                model=cfg.embedding_model or DEFAULT_OPENAI_EMBED_MODEL,
+            )
+        return None
+
+    if level == EMBED_LEVEL_LOCAL:
+        # 管理员可显式选 hashing 强制走哨兵；其余情形只要本地可用就用本地
+        if cfg.embedding_provider != EMBEDDING_PROVIDER_HASHING and local_embed_available():
+            return SentenceTransformerEmbedder(cfg.embedding_model or DEFAULT_LOCAL_EMBED_MODEL)
+        return None
+
+    if level == EMBED_LEVEL_HASHING:
+        return HashingEmbed()
+
+    return None
+
+
+def make_embedder_factory(cfg: ModelConfig):
+    """把配置绑定成 EmbedderRuntime 需要的 factory(level) -> Embedder | None。"""
+    return lambda level: build_embedder(cfg, level)
