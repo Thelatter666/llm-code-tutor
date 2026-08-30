@@ -165,3 +165,18 @@ async def test_extractive_generation_quotes_the_hit_snippet():
         MockLLMProvider().stream([_system("【防抄袭档位：guided】"), user], PARAMS)
     )
     assert "依据知识库片段：排序有三大类。" in text
+
+
+@pytest.mark.asyncio
+async def test_extractive_generation_skips_markdown_headings():
+    """标题行不含句读，抽出来既没信息量，还会和后面的话术粘成一串。"""
+    user = ChatMessage(
+        "user",
+        "以下是课程知识库检索到的相关内容。\n\n"
+        "[1] 来源：sorting.md\n# 排序算法讲义\n冒泡排序重复比较相邻元素。\n\n讲讲排序算法",
+    )
+    text = await collect_text(
+        MockLLMProvider().stream([_system("【防抄袭档位：guided】"), user], PARAMS)
+    )
+    assert "依据知识库片段：冒泡排序重复比较相邻元素。" in text
+    assert "排序算法讲义我不能" not in text

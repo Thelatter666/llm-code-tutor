@@ -106,16 +106,26 @@ class MockLLMProvider:
         return "".join(parts)
 
     def _extract_snippet(self, user_message: str) -> str:
-        """spec §7.3 抽取式生成：取首个命中片段的首句。"""
+        """spec §7.3 抽取式生成：取首个命中片段的首句。
+
+        跳过 Markdown 标题行 —— 「# 排序算法讲义」这种标题不含句读，抽出来既
+        没有信息量，还会和后面的话术粘成一串。
+        """
         match = _CITATION_LINE.search(user_message)
         if not match:
             return ""
-        # 片段正文是「来源：」行的下一行
+        # 片段正文是「来源：」行的下一行起，直到空行
         lines = user_message.splitlines()
         for i, line in enumerate(lines):
-            if line.startswith(match.group(0)):
-                if i + 1 < len(lines) and lines[i + 1].strip():
-                    return _first_sentence(lines[i + 1].strip())
+            if not line.startswith(match.group(0)):
+                continue
+            for candidate in lines[i + 1 :]:
+                text = candidate.strip()
+                if not text:
+                    break
+                if text.startswith("#"):
+                    continue
+                return _first_sentence(text)
         return ""
 
     def _usage(self, text: str, messages: list[ChatMessage]) -> Usage:
