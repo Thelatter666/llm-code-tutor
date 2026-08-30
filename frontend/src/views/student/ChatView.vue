@@ -24,6 +24,8 @@ interface Bubble {
   citations: Citation[]
   done: ChatDoneEvent | null
   typing: boolean
+  /** 流被中断或异常结束时为 true（spec §8.1） */
+  truncated: boolean
 }
 
 const auth = useAuthStore()
@@ -33,7 +35,6 @@ const activeId = ref<string | null>(null)
 const bubbles = ref<Bubble[]>([])
 const input = ref('')
 const streaming = ref(false)
-const sending = ref(false)
 const requestId = ref('')
 const pendingText = ref('')
 const bases = ref<KnowledgeBaseOut[]>([])
@@ -44,7 +45,16 @@ const listRef = ref<HTMLElement | null>(null)
 const reduceMotion = prefersReducedMotion()
 let typeTimer: number | undefined
 
-const canSend = computed(() => input.value.trim().length > 0 && !streaming.value && !sending.value)
+/**
+ * 「仍在处理中」= 网络流未结束 **或** 打字机队列未排空。
+ *
+ * 只判 `streaming` 是不够的：网络传输常在 0.1s 内结束，而打字机还要渲染数秒。
+ * 若此时放开「发送」，新提问会插进正在渲染的气泡里，随后又被
+ * `loadMessages()` 的重载整段覆盖 —— 学生看到的是自己的问题凭空消失。
+ */
+const busy = computed(() => streaming.value || pendingText.value.length > 0)
+
+const canSend = computed(() => input.value.trim().length > 0 && !busy.value)
 
 // ---------------------------------------------------------------- 打字机
 
@@ -95,7 +105,7 @@ async function loadConversations() {
 }
 
 async function selectConversation(id: string) {
-  if (streaming.value) return
+  if (busy.value) return
   activeId.value = id
   await loadMessages(id)
 }
@@ -109,11 +119,13 @@ async function loadMessages(id: string) {
     citations: m.citations ?? [],
     done: null,
     typing: false,
+    truncated: m.truncated,
   }))
   scrollToBottom()
 }
 
 async function newConversation() {
+  if (busy.value) return
   const { data } = await chatApi.createConversation()
   const conv = data.data
   if (!conv) return
@@ -122,6 +134,7 @@ async function newConversation() {
 }
 
 async function removeConversation(conv: ConversationOut) {
+  if (busy.value) return
   await ElMessageBox.confirm(`删除会话「${conv.title}」？该操作不可恢复。`, '删除会话', {
     type: 'warning',
     confirmButtonText: '删除',
@@ -152,7 +165,15 @@ async function send() {
   const conversationId = activeId.value
   if (!conversationId) return
 
-  bubbles.value.push({ id: `u-${Date.now()}`, role: 'user', content: text, citations: [], done: null, typing: false })
+  bubbles.value.push({
+    id: `u-${Date.now()}`,
+    role: 'user',
+    content: text,
+    citations: [],
+    done: null,
+    typing: false,
+    truncated: false,
+  })
   bubbles.value.push({
     id: `a-${Date.now()}`,
     role: 'assistant',
@@ -160,6 +181,7 @@ async function send() {
     citations: [],
     done: null,
     typing: true,
+    truncated: false,
   })
   input.value = ''
   streaming.value = true
@@ -186,6 +208,7 @@ async function send() {
       },
       onError: (err: ChatErrorEvent) => {
         assistant.typing = false
+        assistant.truncated = true
         if (err.code === 4990) ElMessage.info('已中断生成')
         else ElMessage.error(err.message || '生成失败')
       },
@@ -282,7 +305,9 @@ onUnmounted(stopTypewriter)
             <div v-if="b.typing && !b.content" class="typing" aria-label="正在生成">
               <span></span><span></span><span></span>
             </div>
-            <pre v-else class="bubble__text">{{ b.content }}</pre>
+            <pre v-else-if="b.content" class="bubble__text">{{ b.content }}</pre>
+            <!-- 中断发生在一个增量都没吐出时：不给一个空气泡，明确说明发生了什么 -->
+            <p v-else-if="b.truncated" class="bubble__interrupted">（已中断，未生成内容）</p>
 
             <DegradedBanner
               v-if="b.done?.degraded"
@@ -488,6 +513,12 @@ onUnmounted(stopTypewriter)
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.bubble__interrupted {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-muted-foreground);
 }
 
 .bubble__meta {
