@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useAuthStore } from '@/stores/auth'
-import { Document, ChatDotRound, Search } from '@element-plus/icons-vue'
+import { Document, ChatDotRound, MagicStick, Search } from '@element-plus/icons-vue'
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -17,6 +17,7 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { path: '/chat', label: 'AI 答疑对话', icon: ChatDotRound },
+  { path: '/code', label: '代码解析辅导', icon: MagicStick },
   { path: '/knowledge', label: '知识库检索', icon: Search },
   { path: '/admin/knowledge', label: '知识库管理', icon: Document, adminOnly: true },
 ]

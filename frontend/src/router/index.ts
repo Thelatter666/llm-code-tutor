@@ -18,6 +18,10 @@ const router = createRouter({
         { path: '', redirect: '/chat' },
         { path: 'chat', component: () => import('@/views/student/ChatView.vue') },
         {
+          path: 'code',
+          component: () => import('@/views/student/CodeReviewView.vue'),
+        },
+        {
           path: 'knowledge',
           component: () => import('@/views/student/KnowledgeSearchView.vue'),
         },
