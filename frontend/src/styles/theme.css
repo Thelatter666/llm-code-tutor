@@ -37,6 +37,28 @@
 
   --font-sans: Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei',
     sans-serif;
+
+  /* 基线 §4 间距：4px 基础单位，按 4 / 8 / 12 / 16 / 24 / 32 递进 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* 基线 §4 圆角：按钮/输入框 8px、卡片 12px、弹窗 16px */
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-dialog: 16px;
+
+  /* 基线 §4 页面外边距：≥1024px 用 24px，<768px 用 16px */
+  --page-gutter: 24px;
+}
+
+@media (max-width: 767px) {
+  :root {
+    --page-gutter: 16px;
+  }
 }
 
 html,
@@ -67,6 +89,12 @@ button,
 .el-button,
 .el-link {
   cursor: pointer;
+}
+
+/* 基线要求：键盘导航必须有可见 focus 态（使用 --color-ring） */
+:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
 }
 
 /* 基线要求：尊重 prefers-reduced-motion */
