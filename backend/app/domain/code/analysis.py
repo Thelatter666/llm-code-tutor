@@ -41,7 +41,7 @@ def source_hash(language: str, source: str) -> str:
 
     语言并入哈希 —— 同一文本按不同语言解析结果不同，不得串号。
     """
-    return hashlib.sha256(f"{language}\x00{source}".encode("utf-8")).hexdigest()
+    return hashlib.sha256(f"{language}\x00{source}".encode()).hexdigest()
 
 
 @dataclass(frozen=True)

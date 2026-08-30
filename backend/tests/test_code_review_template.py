@@ -1,7 +1,11 @@
 """Mock 讲解模板测试（spec §8.4：Mock 模式下 ai_report 由 static_report 模板化生成）。"""
 
 from app.domain.code.analysis import LANGUAGE_JAVASCRIPT, LANGUAGE_PYTHON, analyze
-from app.domain.code.review import COMPLEXITY_SPLIT_THRESHOLD, build_review_question, render_mock_review
+from app.domain.code.review import (
+    COMPLEXITY_SPLIT_THRESHOLD,
+    build_review_question,
+    render_mock_review,
+)
 
 PY_SRC = """\
 def area(radius):

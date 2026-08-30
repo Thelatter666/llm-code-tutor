@@ -18,8 +18,10 @@ def render_mock_review(report: StaticReport) -> str:
     out: list[str] = [
         "## 静态解析结果",
         "",
-        f"- 语言：{report.language}；共 {report.lines.total} 行"
-        f"（代码 {report.lines.code} / 注释 {report.lines.comment} / 空行 {report.lines.blank}）",
+        (
+            f"- 语言：{report.language}；共 {report.lines.total} 行"
+            f"（代码 {report.lines.code} / 注释 {report.lines.comment} / 空行 {report.lines.blank}）"
+        ),
     ]
     if report.functions or report.classes:
         worst = (

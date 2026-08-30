@@ -16,8 +16,8 @@ from app.domain.code.analysis import LANGUAGE_PYTHON, analyze, source_hash
 from app.domain.code.review import render_mock_review
 from app.infrastructure.llm_runtime import FALLBACK_TO_MOCK
 from app.infrastructure.persistence.models import AuditLog, CodeAnalysis
-from app.infrastructure.registry import get_or_create_singleton
 from app.infrastructure.ports.llm import TextDelta, Usage
+from app.infrastructure.registry import get_or_create_singleton
 from app.services.code_service import CodeService
 from tests.fakes import FakeLLM, fake_llm_runtime
 

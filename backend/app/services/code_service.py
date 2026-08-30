@@ -30,14 +30,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ApiError
 from app.domain.code.analysis import (
     ACTION_CODE_ANALYZE,
-    LANGUAGE_PYTHON,
     StaticReport,
     analyze,
     source_hash,
 )
 from app.domain.code.review import build_review_question, render_mock_review
 from app.infrastructure.llm_runtime import FALLBACK_TO_MOCK
-from app.infrastructure.persistence.models import AuditLog, CodeAnalysis
+from app.infrastructure.persistence.models import CodeAnalysis
 from app.infrastructure.ports.llm import LLMParams, TextDelta, Usage
 from app.infrastructure.prompt_assembler import PromptAssembler
 from app.infrastructure.registry import (

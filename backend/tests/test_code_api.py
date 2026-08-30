@@ -14,7 +14,6 @@ from app.infrastructure.persistence import models  # noqa: F401
 from app.infrastructure.persistence.db import Base, _apply_pragmas, get_session
 from app.infrastructure.persistence.models import AuditLog, CodeAnalysis
 from app.infrastructure.runtime import (
-    get_vector_store,
     reset_runtime,
     set_embedder_runtime,
     set_llm_runtime,
