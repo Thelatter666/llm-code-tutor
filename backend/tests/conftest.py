@@ -13,6 +13,12 @@ os.environ.setdefault("APP_SECRET", Fernet.generate_key().decode())
 # Mock 流式延迟（P3 并入任务 1）会让既有用例按增量数 × 30ms 变慢：套件级显式
 # 置 0。Settings 默认值（30）不动，延迟用例经构造参数显式开延迟自行验证。
 os.environ.setdefault("MOCK_TOKEN_DELAY_MS", "0")
+# P4 实测（报告 §9）：sentence-transformers 加载**已缓存**的本地模型时默认仍会
+# 联网查 Hugging Face Hub，受限网络下无限等待 test_rebuild_uses_the_newly_configured_model。
+# 测试不应依赖网络 —— 强制离线。setdefault 不覆盖用户显式设置；若某条用例确需
+# 首次下载模型，应显式标记而非让整个套件挂起。
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 
 @pytest_asyncio.fixture
