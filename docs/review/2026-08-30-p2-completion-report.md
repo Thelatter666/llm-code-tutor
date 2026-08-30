@@ -31,6 +31,21 @@
 | — | 清理 P2 新增文件的 lint 告警；中断用例改由生成进度驱动 | 完成 | `f9d6992` |
 | — | 缺陷：答疑前未按 `revision` 重绑 LLM 降级链，改配置必须重启 | 完成 | `eaba51a` |
 | — | 补两处变异盲区的守护（见附 2） | 完成 | `75fae39` |
+| — | 回写 spec：`fallback_reason` 封闭枚举三值、SSE 中断码 `4990`、`/stop` 载荷与幂等语义 | 完成 | 见 §1.1 |
+
+### 1.1 spec 回写（P1 审阅 H2 的同类处理）
+
+P2 引入了三处 spec 未记载的契约。不回写的后果很具体：P6 照 spec 做前端提示条时
+会漏掉「模型服务不可用」那条文案，照 spec 做 `/stop` 时不知道要传 `request_id`。
+已回写 `docs/superpowers/specs/2026-08-30-llm-programming-tutor-design.md`：
+
+| 回写位置 | 内容 |
+|---|---|
+| §6.1 `citation` 行 | 载荷标注为「上表是最小集，实际响应为其超集」：`number` 与 §7.2 步骤 5 的内联引用编号对齐，`kb_id` 供管理端溯源 |
+| §6.1 `error` 行 | 明确中断码 `4990`（学生主动中断）与 `5021`（服务端故障）的区分理由 |
+| §6.2 chat 行 | `/stop` 补载荷 `{request_id?}` 与幂等语义（流已结束返回 `cancelled:false`） |
+| §9 表格首行 | LLM 降级补 `fallback_reason="llm_fallback_to_mock"` |
+| §9 降级说明 | 新增「`fallback_reason` 是封闭枚举，共三值」表格（取值 / 含义 / 前端文案要点），并写明两者同时发生时的优先级 |
 
 > **未做**：M6（bcrypt 走线程池）已在 P0 Task 10 实现，本批次只复核 ——
 > `backend/app/services/auth_service.py:28`（注册）与 `:41`（登录）均仍为

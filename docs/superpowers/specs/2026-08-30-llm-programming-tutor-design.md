@@ -225,12 +225,19 @@ llm-code-tutor/
 
 | 事件 | 载荷 | 时机 |
 |---|---|---|
-| `citation` | `{chunk_id, doc_title, snippet, score}` | 检索完成后、生成开始前，可多次 |
+| `citation` | `{chunk_id, document_id, doc_title, kb_id, snippet, score, number}` | 检索完成后、生成开始前，可多次 |
 | `token` | `{delta: string}` | 逐字增量 |
 | `done` | `{message_id, token_usage, usage_estimated, model, provider, rag_hit, degraded, fallback_reason}` | 生成结束；Mock 模式下 `token_usage` 按 `len(content)//4` 估算并置 `usage_estimated=true` |
-| `error` | `{code, message}` | 流中异常 |
+| `error` | `{code, message}` | 流中异常；学生主动中断为 `4990`，服务端故障沿用 `5021` |
 
 `citation` 先于 `token` 发出，前端得以在答案出现前展示"引用了哪几段"。
+
+`citation` 载荷在 P2 落地时比上表多出 `document_id` / `kb_id` / `number` 三个字段：
+`number` 与 §7.2 步骤 5 注入 prompt 的片段编号 `[1][2][3]` 对齐，前端据此把模型正文里的
+内联引用号映射到具体切片；`kb_id` 供管理端溯源。**上表是最小集，实际响应为其超集。**
+
+**中断不是服务端故障**：学生点「停止」时发 `error` 事件且 `code=4990`，前端只结束打字机、
+不弹红色错误提示；真正的调用失败才用 `5021`。两者混用会让一次正常的用户操作显示成故障。
 
 ### 6.2 端点清单
 
@@ -239,7 +246,7 @@ llm-code-tutor/
 | auth | `POST /auth/register` `POST /auth/login` `POST /auth/refresh` `GET /auth/me` `POST /auth/logout` | 注册默认 student 角色 |
 | chat | `POST /chat/conversations` `GET /chat/conversations` `GET /chat/conversations/{id}/messages` `DELETE /chat/conversations/{id}` | |
 | chat | `POST /chat/conversations/{id}/messages` `{content, use_rag, kb_ids?, course_code?}` → **SSE** | 主答疑链路；**固定 `seek_answer` 意图，不做语义推断**（见 §7.1） |
-| chat | `POST /chat/conversations/{id}/stop` | 服务端置 cancel flag |
+| chat | `POST /chat/conversations/{id}/stop` `{request_id?}` | 服务端置 cancel flag；**幂等**，流已结束返回 `{cancelled: false}` 而非报错。`request_id` 缺省时取消该会话全部进行中的流 |
 | knowledge | `GET /knowledge/bases?course_code=` `GET /knowledge/search?query=&kb_ids=&course_code=&top_k=` | 学生侧只读；`course_code` 为空表示不限课程；**后端校验 kb 存在且 `status=ready`**（不存在 `404`，未就绪 `5032`） |
 | admin·kb | `POST/PATCH/DELETE /admin/knowledge/bases` `POST /admin/knowledge/bases/{id}/documents`（multipart） `GET /admin/knowledge/bases/{id}/documents?status=` `POST /admin/knowledge/documents/{id}/reindex` `DELETE /admin/knowledge/documents/{id}` `GET /admin/knowledge/documents/{id}/chunks` `POST /admin/knowledge/bases/{id}/rebuild-vector` `POST /admin/knowledge/bases/{id}/gc-orphan-vectors` | 切片预览服务答辩演示；gc 清理孤儿向量 |
 | code | `POST /code/analyze` `{language, source}` → `{static_report, ai_report, analysis_id}` | 评改意图，豁免防抄袭约束 |
@@ -441,7 +448,7 @@ llm-code-tutor/
 
 | 场景 | 处理 |
 |---|---|
-| LLM 调用失败 / 超时 | 降级到下一 Provider；全部失败返回 `5021`，前端提示"模型不可用"，已得 citation 仍展示 |
+| LLM 调用失败 / 超时 | 降级到下一 Provider，并置 `degraded=true` + `fallback_reason="llm_fallback_to_mock"`；全部失败返回 `5021`，前端提示"模型不可用"，已得 citation 仍展示 |
 | 无 API Key | 解析为 `MockProvider`，全链路可用 + 前端角标 |
 | Embedding 失败 | 三级回退：OpenAI 兼容 → sentence-transformers → HashingEmbed；**落到 HashingEmbed 时不注入 prompt**，强制 `rag_hit=false` |
 | Chroma 不可用 | 知识库功能降级（`5032`），其余模块不受影响 |
@@ -462,6 +469,18 @@ llm-code-tutor/
 `degraded=true`，`fallback_reason="no_relevant_chunk"`。它与哨兵降级靠
 `fallback_reason` 区分 —— 前者是正常的「知识库里没有相关内容」，后者是
 `hashing_embed_no_semantics`，意味着检索结果无语义、不可信。两者都不可注入 prompt。
+
+**`fallback_reason` 是封闭枚举，共三值**，前端必须逐个给文案，不能只做一个泛化的
+「已降级」提示条：
+
+| 取值 | 含义 | 前端文案要点 |
+|---|---|---|
+| `no_relevant_chunk` | 知识库里没有相关内容（正常未命中） | 「知识库无相关内容，以下为通用回答」 |
+| `hashing_embed_no_semantics` | 检索结果无语义、不可信（ADR-0004） | 「已停用知识库增强」 |
+| `llm_fallback_to_mock` | 首选提供方不可用，已降级到 Mock（§9 首行） | 「模型服务不可用，用量按字符数估算」 |
+
+检索降级与提供方降级可能同时发生，此时 `degraded` 取二者的或，`fallback_reason`
+**优先报检索的** —— 它是学生更可感知的那个（P2 约定）。
 
 ---
 
