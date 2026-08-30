@@ -27,6 +27,16 @@ MODE_LOOSE = "loose"
 ANTI_PLAGIARISM_MODES = (MODE_STRICT, MODE_GUIDED, MODE_LOOSE)
 DEFAULT_MODE = MODE_GUIDED
 
+# --- 消息角色（spec §5 Message.role） ---
+ROLE_USER = "user"
+ROLE_ASSISTANT = "assistant"
+ROLE_SYSTEM = "system"
+MESSAGE_ROLES = (ROLE_USER, ROLE_ASSISTANT, ROLE_SYSTEM)
+
+# --- 会话标题 ---
+DEFAULT_CONVERSATION_TITLE = "新的对话"
+TITLE_MAX_CHARS = 20
+
 # --- 审计动作（spec §8.1：无论正常结束还是异常中断都要写入） ---
 ACTION_CHAT = "chat"
 

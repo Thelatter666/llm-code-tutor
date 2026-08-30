@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from sqlalchemy import JSON, Boolean, Float, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.domain.chat.policy import DEFAULT_CONVERSATION_TITLE
 from app.domain.knowledge.status import DOC_PENDING, KB_READY
 from app.infrastructure.persistence.db import UTCDateTime, Base
 
@@ -142,7 +143,7 @@ class Conversation(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     user_id: Mapped[str] = mapped_column(String, index=True)
-    title: Mapped[str] = mapped_column(String, default="新的对话")
+    title: Mapped[str] = mapped_column(String, default=DEFAULT_CONVERSATION_TITLE)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_now)
     # 会话列表按最近活动排序，onupdate 保证每次新消息都推进它
     updated_at: Mapped[datetime] = mapped_column(

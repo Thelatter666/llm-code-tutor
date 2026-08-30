@@ -4,9 +4,19 @@ Fake 比 Mock 更合适：它们是**有状态的、行为正确的**端口实�
 断言「发生了什么」而不是「调用了什么」。
 """
 
+import asyncio
 import itertools
 
+from app.infrastructure.llm_runtime import LLM_LEVEL_PRIMARY, LLMRuntime
+from app.infrastructure.ports.llm import (
+    ChatMessage,
+    Completion,
+    LLMParams,
+    TextDelta,
+    Usage,
+)
 from app.infrastructure.ports.vectorstore import VectorHit, VectorRecord
+from app.services.retrieval_service import Citation, SearchResult
 
 
 class FakeVectorStore:
@@ -148,6 +158,102 @@ def _fake_vector(text: str, dimension: int) -> list[float]:
 def _cosine(a: list[float], b: list[float]) -> float:
     size = min(len(a), len(b))
     return sum(a[i] * b[i] for i in range(size))
+
+
+class FakeLLM:
+    """流式 LLM 替身：记录收到的 messages，按给定回复逐字吐出。
+
+    `fail=True` 模拟「第一个元素就失败」，供降级与错误路径测试使用。
+    """
+
+    def __init__(self, reply: str = "这是回答。", *, fail: bool = False, name: str = "fake"):
+        self.name = name
+        self.reply = reply
+        self.fail = fail
+        self.messages: list[list[ChatMessage]] = []
+        self.params: list[LLMParams] = []
+
+    async def stream(self, messages, params, *, cancel=None):
+        self.messages.append(list(messages))
+        self.params.append(params)
+        if self.fail:
+            raise RuntimeError("上游模型不可用")
+        for ch in self.reply:
+            if cancel is not None and cancel.is_set():
+                break
+            yield TextDelta(ch)
+            await asyncio.sleep(0)
+        yield self._usage(messages)
+
+    async def complete(self, messages, params) -> Completion:
+        self.messages.append(list(messages))
+        if self.fail:
+            raise RuntimeError("上游模型不可用")
+        return Completion(text=self.reply, usage=self._usage(messages))
+
+    def _usage(self, messages) -> Usage:
+        prompt = sum(len(m.content) for m in messages) // 4
+        completion = len(self.reply) // 4
+        return Usage(prompt, completion, prompt + completion, estimated=True)
+
+
+def fake_llm_runtime(provider, *, expected: str | None = None) -> LLMRuntime:
+    """把替身包成 LLMRuntime；降级判定所需的 expected 默认取替身自己的名字。"""
+    return LLMRuntime(
+        lambda level: provider if level == LLM_LEVEL_PRIMARY else None,
+        expected=expected or provider.name,
+    )
+
+
+class FakeRetrieval:
+    """检索替身：服务层只调 `search()`，故只需同签名。"""
+
+    def __init__(self, result: SearchResult | None = None):
+        self.result = result or SearchResult(
+            rag_hit=False, degraded=False, fallback_reason=None, threshold=0.35
+        )
+        self.queries: list[str] = []
+
+    async def search(self, query, *, kb_ids=None, course_code=None, top_k=None):
+        self.queries.append(query)
+        return self.result
+
+
+def hit_result() -> SearchResult:
+    """一次正常命中的检索结果（两条引用）。"""
+    return SearchResult(
+        rag_hit=True,
+        degraded=False,
+        fallback_reason=None,
+        threshold=0.35,
+        embedder="fake",
+        citations=[
+            Citation(
+                chunk_id="chunk-1",
+                document_id="doc-1",
+                doc_title="第1讲",
+                kb_id="kb-1",
+                snippet="排序有三大类",
+                score=0.72,
+                number=1,
+            ),
+            Citation(
+                chunk_id="chunk-2",
+                document_id="doc-1",
+                doc_title="第1讲",
+                kb_id="kb-1",
+                snippet="快排是分治",
+                score=0.61,
+                number=2,
+            ),
+        ],
+    )
+
+
+def miss_result(reason: str = "no_relevant_chunk") -> SearchResult:
+    return SearchResult(
+        rag_hit=False, degraded=True, fallback_reason=reason, threshold=0.35, embedder="fake"
+    )
 
 
 # 供测试按需生成唯一 id
