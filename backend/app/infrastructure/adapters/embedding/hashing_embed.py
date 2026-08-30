@@ -14,8 +14,6 @@
 import hashlib
 import math
 
-from app.infrastructure.ports.embedding import Embedder
-
 
 class HashingEmbed:
     name = "hashing"
