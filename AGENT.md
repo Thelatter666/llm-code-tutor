@@ -16,7 +16,10 @@
 
 进行**任何代码修改**，必须按以下流程执行，每阶段需用户确认后才进入下一步：
 
-1. **提需求** → 2. **探索理解** → 3. **复述对齐**（用户确认后才动手）→ 4. **新建分支**（从 `main`，如 `feat/xxx`、`docs/xxx`，禁止直接改 main）→ 5. **执行任务**（加载 `mywf` skill：brainstorm → grilling → spec → plan → 实现）→ 6. **效果确认**（只汇报效果，用户亲自检查）→ 7. **commit / merge 指令**（用户明确下令前，绝不 commit / merge / push）→ 8. **合并 main** → 9. **同步远端**
+1. **提需求** → 2. **探索理解** → 3. **复述对齐**（用户确认后才动手）→ 4. **新建分支**（从 `main`，如 `feat/xxx`、`docs/xxx`，禁止直接改 main）→ 5. **执行任务**（加载 `mywf` skill：brainstorm → grilling → spec → plan → 实现）→ 6. **效果确认**（只汇报效果，用户亲自检查）→ 7. **commit / merge 指令**（用户明确下令前，绝不 commit / merge）→ 8. **合并 main**
+
+> **远端同步不在本工作流内。** 用户将在本项目本地初步开发完成后，自行创建 GitHub 仓库并推送。
+> Agent 不得执行 `git remote add`、`git push` 或任何涉及远端的操作，除非用户另行明确要求。
 
 ### 阶段细则
 
@@ -28,15 +31,15 @@
 | 4. 新建分支   | 从 `main` 切出功能分支，命名规范 `feat/<功能>`、`fix/<问题>`、`docs/<文档>`；禁止直接改 main |
 | 5. 执行任务   | 加载 `mywf` skill，依次执行 brainstorm → grilling → spec → plan → 实现，各子阶段均需确认   |
 | 6. 效果确认   | Agent **只汇报改动效果与验证方式**，不做自我判定；由用户亲自检查                          |
-| 7. 提交指令   | **未经用户明确下令，绝不执行 commit / merge / push**，包括不带参数的 `git commit`         |
+| 7. 提交指令   | **未经用户明确下令，绝不执行 commit / merge**，包括不带参数的 `git commit`               |
 | 8. 合并 main  | 用户下令后，将功能分支合并回 `main`                                                      |
-| 9. 同步远端   | 用户下令后，推送到远端仓库                                                               |
 
 ### 铁律
 
 - 第 3 阶段（复述对齐）未获用户确认前，不得创建/修改任何代码文件。
-- 第 7 阶段前，禁止任何形式的 `git commit`、`git merge`、`git push`、`git rebase`。
+- 第 7 阶段前，禁止任何形式的 `git commit`、`git merge`、`git rebase`。
 - 禁止直接在 `main` 分支上提交。
+- 禁止任何涉及远端的操作（`git push`、`git remote add` 等）—— 远端同步由用户本人处理。
 - 用户只提出需求、不指定实现细节时，Agent 必须先走完 brainstorm → grilling → spec → plan，不得跳步。
 
 ### 授权例外
@@ -45,7 +48,7 @@
 
 | 日期 | 授权范围 | 授权内容 |
 |---|---|---|
-| 2026-08-30 | P0 基座实施（`docs/superpowers/plans/2026-08-30-p0-foundation.md` 的 Task 1–15） | 用户预先授权：每个 Task 完成且全量测试通过后，可直接按 Task 粒度 `git commit`，无需逐次请示。**`merge` 与 `push` 不在本次授权内**，仍需单独下令。 |
+| 2026-08-30 | P0 基座实施（`docs/superpowers/plans/2026-08-30-p0-foundation.md` 的 Task 1–15） | 用户预先授权：每个 Task 完成且全量测试通过后，可直接按 Task 粒度 `git commit`，无需逐次请示。**`merge` 不在本次授权内**，仍需单独下令。 |
 
 ## 产出物落盘约定
 
