@@ -53,6 +53,18 @@ class EmbedderRuntime:
     def level(self) -> int:
         return self._level
 
+    def rebind(self, factory: Callable[[int], Embedder | None]) -> None:
+        """配置变更后换掉 factory，并把降级级别重置回最高级。
+
+        不重置的话，切换 embedding 后会一直沿用降级前的级别，新配置永远不生效。
+        重置后 `_ready` 立即置 False —— 旧模型已不代表当前配置，必须重新预热。
+        """
+        self._factory = factory
+        self._level = EMBED_LEVEL_OPENAI
+        self._embedder = None
+        self._ready = False
+        self._error = None
+
     def snapshot(self) -> dict:
         """/health 的模型就绪状态载荷。"""
         return {

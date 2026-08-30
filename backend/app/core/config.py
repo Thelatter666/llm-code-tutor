@@ -16,6 +16,12 @@ class Settings(BaseSettings):
     refresh_token_ttl_days: int = 7
     app_secret_path: str = ".secret_key"
     llm_provider: str = "mock"
+    # Chroma 本地持久化目录（相对路径以 backend/ 为基准）
+    chroma_persist_dir: str = "data/chroma"
+    # 上传文件落盘目录（相对路径以 backend/ 为基准）
+    upload_dir: str = "data/uploads"
+    # 索引并发上限（spec §3.2 权衡 14）
+    index_concurrency: int = 1
 
 
 @lru_cache
