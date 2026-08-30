@@ -8,7 +8,7 @@ P2 追加 Conversation / Message。
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, Float, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Float, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.domain.chat.policy import DEFAULT_CONVERSATION_TITLE
@@ -177,4 +177,28 @@ class Message(Base):
     anti_plagiarism_mode: Mapped[str | None] = mapped_column(String, nullable=True)
     # 底线拦截：本次请求是否触发防抄袭底线（spec §7.4）
     blocked_by_policy: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_now, index=True)
+
+
+class CodeAnalysis(Base):
+    """代码分析：一次代码解析的完整结果，含静态报告与 AI 报告（CONTEXT.md）。
+
+    spec §5：user_id / language / source_hash / static_report(JSON) /
+    ai_report(JSON?) / created_at。**CodeSession 与 CodeRun 归 P4，本批不建。**
+
+    `source_hash = sha256(language + "\\x00" + source)`，命中即复用不重算
+    （spec §8.4）；唯一约束 `(user_id, language, source_hash)` 把「不重复算」
+    落到库层 —— 复用按 user 隔离，不跨账号共享。
+    """
+
+    __tablename__ = "code_analyses"
+    __table_args__ = (UniqueConstraint("user_id", "language", "source_hash"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    language: Mapped[str] = mapped_column(String)
+    source_hash: Mapped[str] = mapped_column(String, index=True)
+    static_report: Mapped[dict] = mapped_column(JSON)
+    # AI 报告可为 null（CONTEXT.md）；Mock 模式下由静态报告模板化生成（spec §8.4）
+    ai_report: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_now, index=True)

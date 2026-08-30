@@ -24,6 +24,7 @@ JS 只检查 `const / let / var` 声明，不检查函数参数。
 """
 
 import ast
+import hashlib
 import re
 from dataclasses import dataclass, field
 
@@ -33,6 +34,14 @@ ANALYSIS_LANGUAGES = (LANGUAGE_PYTHON, LANGUAGE_JAVASCRIPT)
 
 # 审计动作（spec §8.4 的业务行为留痕，与 chat 同模式）
 ACTION_CODE_ANALYZE = "code_analyze"
+
+
+def source_hash(language: str, source: str) -> str:
+    """spec §8.4：source_hash 命中历史则复用，不重复算。
+
+    语言并入哈希 —— 同一文本按不同语言解析结果不同，不得串号。
+    """
+    return hashlib.sha256(f"{language}\x00{source}".encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True)
