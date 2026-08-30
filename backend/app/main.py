@@ -17,7 +17,7 @@ from app.infrastructure.runtime import (
     refresh_embedder_config,
     refresh_llm_config,
 )
-from app.routers import admin_knowledge, admin_model_config, chat, knowledge
+from app.routers import admin_knowledge, admin_model_config, admin_stats, chat, knowledge
 from app.routers import auth as auth_router
 from app.services.model_config_service import ModelConfigService
 
@@ -76,6 +76,7 @@ app.include_router(chat.router)
 app.include_router(knowledge.router)
 app.include_router(admin_knowledge.router)
 app.include_router(admin_model_config.router)
+app.include_router(admin_stats.router)
 
 _admin = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
