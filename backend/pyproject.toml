@@ -15,6 +15,10 @@ dependencies = [
     "jinja2>=3.1",
     "python-multipart>=0.0.12",
     "cryptography>=44",
+    # --- P1 RAG 知识库批次引入 ---
+    "chromadb>=0.5",  # P1：向量库本地持久化
+    "pdfplumber>=0.11",  # P1：PDF 文档解析
+    "python-docx>=1.1",  # P1：DOCX 文档解析
 ]
 
 [project.optional-dependencies]
