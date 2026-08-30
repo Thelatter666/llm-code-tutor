@@ -38,7 +38,7 @@ from app.infrastructure.persistence.models import AuditLog, Conversation, Messag
 from app.infrastructure.ports.llm import LLMParams, TextDelta, Usage
 from app.infrastructure.prompt_assembler import PromptAssembler
 from app.infrastructure.registry import get_or_create_singleton, llm_config, llm_params
-from app.infrastructure.runtime import get_llm_runtime
+from app.infrastructure.runtime import get_llm_runtime, refresh_llm_config
 from app.infrastructure.sse import (
     CANCELLED_CODE,
     EVENT_DONE,
@@ -66,6 +66,9 @@ class ChatService:
     ):
         self._session = session
         self._llm = llm or get_llm_runtime()
+        # 只有用共享运行时时才按 revision 重新绑定（见 stream_reply）。
+        # 注入替身的测试若也被 rebind，替身会被真实的 factory 顶掉。
+        self._shared_llm = llm is None
         self._retrieval = retrieval or RetrievalService(session)
         self._prompts = prompts or PromptAssembler()
         self._cancels = cancels or get_cancellation_registry()
@@ -138,6 +141,10 @@ class ChatService:
     ):
         """产出 `StreamEvent`：`citation* → token* → done`（或 `error`）。"""
         conv = await self.get_conversation(conversation_id, user_id)
+        # spec §4.2 硬约束 4「配置热生效」：按 ModelConfig.revision 重新绑定降级链。
+        # 只在启动时绑一次的话，管理员改了 base_url / Key 之后必须重启才生效。
+        if self._shared_llm:
+            await refresh_llm_config(self._session)
         cfg = await get_or_create_singleton(self._session)
         mode = resolve_mode(SEEK_ANSWER, cfg.anti_plagiarism_mode)
         floor_hit = detect_floor_violation(content)

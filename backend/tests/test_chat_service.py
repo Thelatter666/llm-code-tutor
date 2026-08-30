@@ -394,6 +394,51 @@ async def test_explicit_title_is_not_overwritten(session, cancels):
 
 
 @pytest.mark.asyncio
+async def test_model_config_change_takes_effect_without_restart(session, cancels):
+    """spec §4.2 硬约束 4「配置热生效」+ M10 降级链。
+
+    把首选提供方配成必然连不上的 OpenAI 兼容端点，流应当降级到 Mock 并在 `done`
+    里显式标记 —— 而不是等重启才生效，更不是直接 5021。
+    """
+    from app.core.crypto import encrypt_api_key
+    from app.infrastructure.runtime import reset_runtime
+
+    cfg = await get_or_create_singleton(session)
+    cfg.provider = "openai_compat"
+    cfg.base_url = "http://127.0.0.1:9/v1"
+    cfg.api_key_encrypted = encrypt_api_key("sk-unreachable-0001")
+    cfg.revision += 1
+    await session.commit()
+
+    reset_runtime()
+    try:
+        svc = ChatService(session, cancels=cancels)  # llm 使用共享运行时
+        conv = await _conversation(session)
+        events = await _collect(
+            svc.stream_reply(conv.id, QUESTION, user_id="u1", request_id="r1", use_rag=False)
+        )
+        done = events[-1].data
+        assert done["provider"] == "mock"
+        assert done["degraded"] is True
+        assert done["fallback_reason"] == "llm_fallback_to_mock"
+    finally:
+        reset_runtime()
+
+
+@pytest.mark.asyncio
+async def test_injected_llm_is_never_rebound(session, cancels):
+    """注入替身的服务不得被共享运行时的配置刷新顶掉。"""
+    fake = fake_llm_runtime(FakeLLM(reply="替身回答"))
+    svc = ChatService(session, llm=fake, cancels=cancels)
+    conv = await _conversation(session)
+
+    events = await _collect(
+        svc.stream_reply(conv.id, QUESTION, user_id="u1", request_id="r1", use_rag=False)
+    )
+    assert events[-1].data["provider"] == "fake"
+
+
+@pytest.mark.asyncio
 async def test_another_users_conversation_is_invisible(session, cancels):
     svc, _ = _svc(session, cancels=cancels)
     conv = await _conversation(session, user_id="someone-else")

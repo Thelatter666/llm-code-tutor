@@ -32,6 +32,8 @@ _embedder_runtime: EmbedderRuntime | None = None
 _embedder_revision: int | None = None
 _llm_runtime: LLMRuntime | None = None
 _llm_revision: int | None = None
+# 运行时是否被外部注入（set_llm_runtime）；为 True 时配置刷新只记账不覆盖
+_llm_external: bool = False
 
 
 def default_chroma_dir() -> Path:
@@ -104,10 +106,15 @@ def get_llm_runtime() -> LLMRuntime:
 
 
 def set_llm_runtime(runtime: LLMRuntime | None) -> None:
-    """替换运行时（测试注入，或配置变更后重建）。"""
-    global _llm_runtime, _llm_revision
+    """替换运行时（测试注入，或运维手动注入）。
+
+    注入后的运行时被标记为「外部所有」，`refresh_llm_config()` 不再覆盖它 ——
+    否则一次配置刷新就会把测试替身（或运维指定的实现）悄悄换成库里的配置。
+    """
+    global _llm_runtime, _llm_revision, _llm_external
     _llm_runtime = runtime
     _llm_revision = None
+    _llm_external = runtime is not None
 
 
 async def refresh_llm_config(session: AsyncSession) -> bool:
@@ -122,17 +129,22 @@ async def refresh_llm_config(session: AsyncSession) -> bool:
     if _llm_revision == cfg.revision:
         return False
 
-    get_llm_runtime().rebind(make_llm_factory(cfg), expected=cfg.provider)
     _llm_revision = cfg.revision
+    if _llm_external:
+        # 运行时由外部注入，只记录 revision，不覆盖
+        return True
+
+    get_llm_runtime().rebind(make_llm_factory(cfg), expected=cfg.provider)
     return True
 
 
 def reset_runtime() -> None:
     """仅供测试：清空全部进程级单例。"""
     global _vector_store, _embedder_runtime, _embedder_revision
-    global _llm_runtime, _llm_revision
+    global _llm_runtime, _llm_revision, _llm_external
     _vector_store = None
     _embedder_runtime = None
     _embedder_revision = None
     _llm_runtime = None
     _llm_revision = None
+    _llm_external = False

@@ -11,8 +11,8 @@ from app.infrastructure.adapters.llm.mock_provider import MockLLMProvider
 from app.infrastructure.adapters.llm.openai_compat import OpenAICompatProvider
 from app.infrastructure.llm_runtime import LLM_LEVEL_MOCK, LLM_LEVEL_PRIMARY, LLM_LEVELS
 from app.infrastructure.persistence.models import ModelConfig
-from app.infrastructure.registry import LLMConfig, build_llm, llm_config, llm_params
 from app.infrastructure.ports.llm import LLMParams
+from app.infrastructure.registry import LLMConfig, build_llm, llm_config, llm_params
 
 
 def _cfg(**kw) -> LLMConfig:
@@ -74,7 +74,11 @@ async def test_refresh_llm_config_rebinds_on_revision_change(session):
     这里只验刷新时序，**不发真实网络请求**（真去连 OpenAI 兼容端点会让用例
     依赖外网；运行期降级由 `test_llm_runtime.py` 用替身覆盖）。
     """
-    from app.infrastructure.runtime import get_llm_runtime, refresh_llm_config, reset_runtime
+    from app.infrastructure.runtime import (
+        get_llm_runtime,
+        refresh_llm_config,
+        reset_runtime,
+    )
 
     reset_runtime()
     try:
