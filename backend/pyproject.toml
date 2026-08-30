@@ -19,6 +19,10 @@ dependencies = [
     "chromadb>=0.5",  # P1：向量库本地持久化
     "pdfplumber>=0.11",  # P1：PDF 文档解析
     "python-docx>=1.1",  # P1：DOCX 文档解析
+    # --- P4 在线编辑器与受限执行器批次引入 ---
+    # ADR-0003：内存上限靠 psutil 轮询采样子进程 RSS，不能靠 RLIMIT_AS/DATA/RSS
+    #（macOS 下这三项 setrlimit 一律抛 ValueError: current limit exceeds maximum limit）
+    "psutil>=6.0",
 ]
 
 [project.optional-dependencies]

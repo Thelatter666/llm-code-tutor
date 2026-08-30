@@ -116,9 +116,12 @@ BLACKLIST_RULES: tuple[BlacklistRule, ...] = (
         scan_in=SCAN_LITERALS,
     ),
     BlacklistRule("new_function", (r"\bnew\s+Function\s*\(",), (LANGUAGE_JAVASCRIPT,)),
+    # 只拦**删除类**操作。写文件（`fs.writeFileSync`）不拦 —— 它写在临时目录里，
+    # 且由 RLIMIT_FSIZE 兜底在 1MB；把它列进黑名单只会误伤「把结果存成文件」这类
+    # 正常练习，而收益为零。
     BlacklistRule(
         "fs_destructive",
-        (r"\bfs\s*\.\s*(?:rm|rmSync|rmdir|rmdirSync|unlink|unlinkSync|writeFile|writeFileSync)\b",),
+        (r"\bfs\s*\.\s*(?:rm|rmSync|rmdir|rmdirSync|unlink|unlinkSync)\b",),
         (LANGUAGE_JAVASCRIPT,),
     ),
     BlacklistRule("eval", (r"\beval\s*\(",), (LANGUAGE_JAVASCRIPT,)),

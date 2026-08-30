@@ -119,12 +119,20 @@ def test_python_unterminated_string_falls_back_to_raw_scan():
         ("const cp = require('child_process');\n", "child_process"),
         ("const f = new Function('return 1');\n", "new_function"),
         ("fs.rmSync('/tmp/x', { recursive: true });\n", "fs_destructive"),
-        ("fs.writeFileSync('a.txt', 'x');\n", "fs_destructive"),
+        ("fs.unlinkSync('a.txt');\n", "fs_destructive"),
         ("eval('1+1');\n", "eval"),
     ],
 )
 def test_javascript_blacklist_hits(source, rule):
     assert scan_blacklist(JS, source) == rule
+
+
+def test_javascript_file_write_is_not_blacklisted():
+    """写文件不进黑名单 —— 它落在临时目录里，且由 RLIMIT_FSIZE 卡在 1MB。
+
+    把 writeFileSync 列进黑名单只会误伤「把结果存成文件」这类正常练习。
+    """
+    assert scan_blacklist(JS, "fs.writeFileSync('out.txt', 'hello');\n") is None
 
 
 def test_javascript_plain_code_is_not_blocked():

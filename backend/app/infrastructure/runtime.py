@@ -13,9 +13,11 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.infrastructure.adapters.execution.subprocess_executor import SubprocessCodeExecutor
 from app.infrastructure.adapters.vectorstore.chroma_store import ChromaVectorStore
 from app.infrastructure.embedder_runtime import EmbedderRuntime
 from app.infrastructure.llm_runtime import LLMRuntime
+from app.infrastructure.ports.code_executor import CodeExecutor
 from app.infrastructure.ports.vectorstore import VectorStore
 from app.infrastructure.registry import (
     EmbeddingConfig,
@@ -34,6 +36,8 @@ _llm_runtime: LLMRuntime | None = None
 _llm_revision: int | None = None
 # 运行时是否被外部注入（set_llm_runtime）；为 True 时配置刷新只记账不覆盖
 _llm_external: bool = False
+# 代码执行器是进程内单例（创建成本很低，但只应有一个，便于测试整体替换）
+_code_executor: CodeExecutor | None = None
 
 
 def default_chroma_dir() -> Path:
@@ -138,13 +142,31 @@ async def refresh_llm_config(session: AsyncSession) -> bool:
     return True
 
 
+def get_code_executor() -> CodeExecutor:
+    """代码执行器单例（spec §8.3）。
+
+    与向量化器不同，它不随 ModelConfig.revision 变化 —— 执行能力与模型配置无关。
+    留这个访问点只为**测试可整体替换为 Fake**，与 `set_vector_store` 同构。
+    """
+    global _code_executor
+    if _code_executor is None:
+        _code_executor = SubprocessCodeExecutor()
+    return _code_executor
+
+
+def set_code_executor(executor: CodeExecutor | None) -> None:
+    global _code_executor
+    _code_executor = executor
+
+
 def reset_runtime() -> None:
     """仅供测试：清空全部进程级单例。"""
     global _vector_store, _embedder_runtime, _embedder_revision
-    global _llm_runtime, _llm_revision, _llm_external
+    global _llm_runtime, _llm_revision, _llm_external, _code_executor
     _vector_store = None
     _embedder_runtime = None
     _embedder_revision = None
     _llm_runtime = None
     _llm_revision = None
     _llm_external = False
+    _code_executor = None
