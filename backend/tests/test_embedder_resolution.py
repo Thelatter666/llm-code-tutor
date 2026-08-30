@@ -1,5 +1,7 @@
 from app.infrastructure.adapters.embedding.hashing_embed import HashingEmbed
-from app.infrastructure.adapters.embedding.openai_compat_embed import OpenAICompatEmbedder
+from app.infrastructure.adapters.embedding.openai_compat_embed import (
+    OpenAICompatEmbedder,
+)
 from app.infrastructure.adapters.embedding.sentence_transformer import (
     SentenceTransformerEmbedder,
     local_embed_available,
@@ -53,6 +55,20 @@ def test_hashing_level_is_always_available_as_last_resort():
 
 def test_level_beyond_last_is_none():
     assert build_embedder(_cfg(), EMBED_LEVEL_HASHING + 1) is None
+
+
+def test_local_level_ignores_an_openai_model_name():
+    """回归：OpenAI 级失败后降级到本地时，不得把 OpenAI 的模型名喂给本地模型。
+
+    实测后果：SentenceTransformerEmbedder 会去 HuggingFace 拉
+    `sentence-transformers/text-embedding-3-small`，404 后连本地这一级也一起失败，
+    于是本该可用的本地语义检索直接掉到 HashingEmbed 哨兵。
+    """
+    cfg = _cfg(provider="openai_compat", model="text-embedding-3-small", api_key="sk-x")
+    emb = build_embedder(cfg, EMBED_LEVEL_LOCAL)
+    if local_embed_available():
+        assert isinstance(emb, SentenceTransformerEmbedder)
+        assert emb.model == "paraphrase-multilingual-MiniLM-L12-v2"
 
 
 def test_local_model_name_is_honoured():

@@ -124,9 +124,15 @@ def build_embedder(cfg: EmbeddingConfig, level: int) -> Embedder | None:
 
     if level == EMBED_LEVEL_LOCAL:
         # 管理员可显式选 hashing 强制走哨兵；其余情形只要本地可用就用本地
-        if cfg.provider != EMBEDDING_PROVIDER_HASHING and local_embed_available():
-            return SentenceTransformerEmbedder(cfg.model or DEFAULT_LOCAL_EMBED_MODEL)
-        return None
+        if cfg.provider == EMBEDDING_PROVIDER_HASHING or not local_embed_available():
+            return None
+        # cfg.model 是**该 provider 名下**的模型名。OpenAI 的模型名（如
+        # text-embedding-3-small）喂给 sentence-transformers 会去 HuggingFace 拉一个
+        # 根本不存在的 repo，于是「第一级失败 → 第二级也失败 → 直接掉到哨兵」。
+        # provider 不是本地时，本地这一级只用自己的默认模型。
+        if cfg.provider == EMBEDDING_PROVIDER_OPENAI:
+            return SentenceTransformerEmbedder(DEFAULT_LOCAL_EMBED_MODEL)
+        return SentenceTransformerEmbedder(cfg.model or DEFAULT_LOCAL_EMBED_MODEL)
 
     if level == EMBED_LEVEL_HASHING:
         return HashingEmbed()
