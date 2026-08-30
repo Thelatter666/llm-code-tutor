@@ -87,3 +87,81 @@ async def test_complete_returns_text_and_usage():
 
 def test_name_is_mock():
     assert MockLLMProvider().name == "mock"
+
+
+# ------------------------------------------------- spec §7.3：Mock 也遵守防抄袭三档
+
+
+def _system(marker: str) -> ChatMessage:
+    return ChatMessage("system", f"你是助教。\n{marker}")
+
+
+def _ask(text: str = "怎么用 Python 写快排？") -> ChatMessage:
+    return ChatMessage("user", text)
+
+
+async def _render(marker: str) -> str:
+    return await collect_text(MockLLMProvider().stream([_system(marker), _ask()], PARAMS))
+
+
+@pytest.mark.asyncio
+async def test_strict_mode_outputs_guidance_instead_of_implementation():
+    """spec §7.3：strict 档输出固定引导话术。"""
+    text = await _render("【防抄袭档位：strict】")
+    assert "伪代码骨架" in text
+    assert "我不能给出完整可运行代码" in text
+    assert "请先自行尝试" not in text
+
+
+@pytest.mark.asyncio
+async def test_guided_mode_outputs_a_minimal_snippet_only():
+    text = await _render("【防抄袭档位：guided】")
+    assert "不超过 10 行" in text
+    assert "不是完整实现" in text
+
+
+@pytest.mark.asyncio
+async def test_loose_mode_outputs_implementation_with_walkthrough():
+    text = await _render("【防抄袭档位：loose】")
+    assert "请先自行尝试" in text
+    assert "逐段讲解" in text
+
+
+@pytest.mark.asyncio
+async def test_three_modes_produce_different_output():
+    """三档输出必须真的不同 —— 否则演示与联调时「防抄袭是否生效」无从观察。"""
+    outputs = {mode: await _render(f"【防抄袭档位：{mode}】") for mode in ("strict", "guided", "loose")}
+    assert len(set(outputs.values())) == 3
+
+
+@pytest.mark.asyncio
+async def test_exempt_intent_is_not_shaped_by_the_mode():
+    text = await _render("【防抄袭档位：本次豁免】")
+    assert "我不能给出完整可运行代码" not in text
+    assert "豁免" in text
+
+
+@pytest.mark.asyncio
+async def test_floor_hit_turns_the_request_into_guidance():
+    text = await _render("【防抄袭档位：loose】【本次请求已触发底线：homework_ghostwriting】")
+    assert "代做作业" in text
+    assert "可直接提交" in text
+
+
+@pytest.mark.asyncio
+async def test_exam_floor_refuses_to_give_the_answer():
+    text = await _render("【防抄袭档位：loose】【本次请求已触发底线：exam_in_progress】")
+    assert "不能直接给答案" in text
+
+
+@pytest.mark.asyncio
+async def test_extractive_generation_quotes_the_hit_snippet():
+    """spec §7.3：对命中片段做抽取式生成。"""
+    user = ChatMessage(
+        "user",
+        "以下是课程知识库检索到的相关内容。\n\n[1] 来源：第1讲\n排序有三大类。其中快排属于分治。\n\n怎么用 Python 写快排？",
+    )
+    text = await collect_text(
+        MockLLMProvider().stream([_system("【防抄袭档位：guided】"), user], PARAMS)
+    )
+    assert "依据知识库片段：排序有三大类。" in text
