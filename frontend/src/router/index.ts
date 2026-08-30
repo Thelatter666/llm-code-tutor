@@ -22,6 +22,11 @@ const router = createRouter({
           component: () => import('@/views/student/CodeReviewView.vue'),
         },
         {
+          // 在线编辑器：Monaco 体积大，路由级懒加载（ui-baseline §6）
+          path: 'editor',
+          component: () => import('@/views/student/CodeEditorView.vue'),
+        },
+        {
           path: 'knowledge',
           component: () => import('@/views/student/KnowledgeSearchView.vue'),
         },

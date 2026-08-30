@@ -27,6 +27,9 @@ export default defineConfig({
           // Markdown 渲染（markdown-it + DOMPurify + highlight.js）单独分包，
           // 内容不常变，可与视图代码分开缓存
           markdown: ['markdown-it', 'dompurify', 'highlight.js'],
+          // Monaco 只在 /editor 路由被访问时下载（CodeEditor.vue 内再做动态 import），
+          // 单独成块以便长期缓存，也避免它挤进业务包
+          monaco: ['monaco-editor'],
         },
       },
     },
