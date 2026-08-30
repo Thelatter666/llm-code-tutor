@@ -22,8 +22,8 @@ from app.infrastructure.adapters.llm.mock_provider import MockLLMProvider
 from app.infrastructure.adapters.llm.openai_compat import OpenAICompatProvider
 from app.infrastructure.ports.llm import (
     ChatMessage,
-    LLMPort,
     LLMParams,
+    LLMPort,
     TextDelta,
     Usage,
     collect_text,

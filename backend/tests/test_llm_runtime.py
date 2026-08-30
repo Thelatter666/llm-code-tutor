@@ -68,8 +68,9 @@ class EmptyProvider(FakeProvider):
 
     async def stream(self, messages, params, *, cancel=None):
         self.stream_calls += 1
-        return
-        yield  # noqa: F704 - 仅为使其成为异步生成器
+        # 仅为使其成为异步生成器：空流不算失败，不得触发降级
+        if False:  # pragma: no cover
+            yield
 
 
 def _runtime(levels: dict, expected: str):
@@ -215,7 +216,7 @@ async def test_snapshot_exposes_provider_and_degradation():
 @pytest.mark.asyncio
 async def test_rebind_resets_level_and_expected():
     """spec §4.2 硬约束 4：改完配置立即生效，不得沿用降级后的级别。"""
-    runtime, calls = _runtime({LLM_LEVEL_PRIMARY: ExplodingProvider(), LLM_LEVEL_MOCK: FakeProvider("mock")}, "openai_compat")
+    runtime, _ = _runtime({LLM_LEVEL_PRIMARY: ExplodingProvider(), LLM_LEVEL_MOCK: FakeProvider("mock")}, "openai_compat")
     [c async for c in runtime.stream(MESSAGES, PARAMS)]
     assert runtime.level == LLM_LEVEL_MOCK
 

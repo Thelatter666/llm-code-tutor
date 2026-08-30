@@ -68,7 +68,7 @@ async def test_only_user_messages_are_counted(session):
     await session.commit()
 
     data = await AntiPlagiarismStatsService(session).stats()
-    loose = [i for i in data["items"] if i["mode"] == "loose"][0]
+    loose = next(i for i in data["items"] if i["mode"] == "loose")
     assert loose["total"] == 1 and loose["blocked"] == 1
 
 

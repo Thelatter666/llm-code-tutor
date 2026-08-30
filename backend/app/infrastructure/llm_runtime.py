@@ -15,16 +15,16 @@ P0 的 `ProviderRegistry` 是单槽缓存，没有 fallback 概念，因此这�
 """
 
 import logging
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from typing import AsyncIterator, Callable
 
 from app.core.errors import ApiError
 from app.infrastructure.ports.llm import (
     ChatMessage,
     Completion,
     LLMChunk,
-    LLMPort,
     LLMParams,
+    LLMPort,
 )
 
 logger = logging.getLogger(__name__)
@@ -141,7 +141,7 @@ class LLMRuntime:
             try:
                 async for chunk in iterator:
                     yield chunk
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 if isinstance(exc, ApiError):
                     raise
                 # 流已开始，不能再降级重来（会重复输出已吐出的内容）

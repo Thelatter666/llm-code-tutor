@@ -1,6 +1,6 @@
 import asyncio
 import re
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 from app.infrastructure.ports.llm import (
     ChatMessage,

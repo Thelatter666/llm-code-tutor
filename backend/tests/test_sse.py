@@ -25,7 +25,7 @@ def test_frame_is_parseable_by_a_plain_sse_reader():
     """前端是手写的 SSE 解析器（EventSource 带不了 Authorization 头），
     这里按它的解析方式反解一遍，确保格式对得上。"""
     frame = format_sse(StreamEvent(EVENT_DONE, {"message_id": "m1", "degraded": False}))
-    lines = frame.rstrip("\n\n").split("\n")
+    lines = frame.rstrip("\n").split("\n")
     assert lines[0] == "event: done"
     assert json.loads(lines[1][6:]) == {"message_id": "m1", "degraded": False}
 

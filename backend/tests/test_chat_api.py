@@ -219,13 +219,19 @@ async def test_sse_body_is_not_wrapped_in_the_unified_envelope(client, _engine):
     assert '"code"' not in body
 
 
-class SlowLLM(FakeLLM):
-    """每个增量之间留出时间窗，让 /stop 能在流进行中被打进来。
+class TickingLLM(FakeLLM):
+    """每吐出一个增量就回调一次，让用例能在**确定的进度**上触发中断。
 
-    `httpx.ASGITransport` 会把整个响应体缓冲成一块返回，无法边收边发；
-    因此中断必须靠「流还没跑完时从另一个 task 打 /stop」来验证，而不是靠
-    客户端读到一半再发请求。
+    `httpx.ASGITransport` 会把整个响应体缓冲成一块返回，无法边收边发，因此中断
+    必须靠「流还没跑完时从另一个 task 打 /stop」来验证。若用固定 `sleep` 定时，
+    用例会在负载波动时抖动（实测出现过一次）；改由生成进度驱动后，/stop 一定
+    发在流已开始之后，且远早于流结束。
     """
+
+    def __init__(self, reply: str, *, on_tick=None):
+        super().__init__(reply=reply)
+        self._on_tick = on_tick
+        self.ticks = 0
 
     async def stream(self, messages, params, *, cancel=None):
         self.messages.append(list(messages))
@@ -233,26 +239,34 @@ class SlowLLM(FakeLLM):
             if cancel is not None and cancel.is_set():
                 break
             yield TextDelta(ch)
+            self.ticks += 1
+            if self._on_tick is not None:
+                await self._on_tick(self.ticks)
             await asyncio.sleep(0.02)
         yield self._usage(messages)
 
 
 @pytest.mark.asyncio
 async def test_stop_interrupts_the_stream_and_persists_partial_content(client, _engine):
-    set_llm_runtime(fake_llm_runtime(SlowLLM(reply="甲乙丙丁戊己庚辛壬癸" * 10)))
     token = await _token(client)
     conv = await _conversation(client, token)
     rid = "rid-stop-1"
+    stop_task: asyncio.Task | None = None
 
-    async def _stop_later():
-        await asyncio.sleep(0.15)
-        return await client.post(
-            f"/api/v1/chat/conversations/{conv}/stop",
-            json={"request_id": rid},
-            headers=_auth(token),
-        )
+    async def on_tick(count: int) -> None:
+        nonlocal stop_task
+        # 第 3 个增量已吐出 → 流必然已注册中断 Event，此刻打 /stop 才有效
+        if count == 3 and stop_task is None:
+            stop_task = asyncio.create_task(
+                client.post(
+                    f"/api/v1/chat/conversations/{conv}/stop",
+                    json={"request_id": rid},
+                    headers=_auth(token),
+                )
+            )
 
-    stop_task = asyncio.create_task(_stop_later())
+    set_llm_runtime(fake_llm_runtime(TickingLLM(reply="甲乙丙丁戊己庚辛壬癸" * 10, on_tick=on_tick)))
+
     async with client.stream(
         "POST",
         f"/api/v1/chat/conversations/{conv}/messages",
@@ -260,8 +274,9 @@ async def test_stop_interrupts_the_stream_and_persists_partial_content(client, _
         headers=_auth(token, rid),
     ) as resp:
         received = "".join([chunk async for chunk in resp.aiter_text()])
-    stopped = await stop_task
 
+    assert stop_task is not None, "流在触发中断前就结束了，用例没有真正测到中断"
+    stopped = await stop_task
     assert stopped.json()["data"]["cancelled"] is True
 
     events = _parse_sse(received)

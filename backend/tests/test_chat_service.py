@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from app.domain.chat.policy import DEFAULT_CONVERSATION_TITLE, MODE_STRICT
 from app.infrastructure.cancellation import CancellationRegistry
-from app.infrastructure.persistence.models import AuditLog, Conversation, Message, ModelConfig
+from app.infrastructure.persistence.models import AuditLog, Conversation, Message
 from app.infrastructure.registry import get_or_create_singleton
 from app.infrastructure.sse import (
     CANCELLED_CODE,
@@ -15,7 +15,13 @@ from app.infrastructure.sse import (
     EVENT_TOKEN,
 )
 from app.services.chat_service import ChatService
-from tests.fakes import FakeLLM, FakeRetrieval, fake_llm_runtime, hit_result, miss_result
+from tests.fakes import (
+    FakeLLM,
+    FakeRetrieval,
+    fake_llm_runtime,
+    hit_result,
+    miss_result,
+)
 
 QUESTION = "闭包是什么？能举个例子吗"
 
@@ -107,7 +113,7 @@ async def test_done_payload_carries_every_field_required_by_spec(session, cancel
 @pytest.mark.asyncio
 async def test_token_usage_comes_from_the_stream_tail(session, cancels):
     """拍板决策 4：用量必须来自流末的 Usage 元素，不得自行计数。"""
-    svc, llm = _svc(session, reply="一二三四五六七八", cancels=cancels)
+    svc, _ = _svc(session, reply="一二三四五六七八", cancels=cancels)
     conv = await _conversation(session)
 
     events = await _collect(svc.stream_reply(conv.id, QUESTION, user_id="u1", request_id="r1"))
