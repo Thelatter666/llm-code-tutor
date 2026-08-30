@@ -21,14 +21,19 @@ from app.infrastructure.embedder_runtime import (
     EMBED_LEVEL_LOCAL,
     EMBED_LEVEL_OPENAI,
 )
+from app.infrastructure.llm_runtime import LLM_LEVEL_MOCK, LLM_LEVEL_PRIMARY
 from app.infrastructure.persistence.models import MODEL_CONFIG_SINGLETON_ID, ModelConfig
 from app.infrastructure.ports.embedding import Embedder
-from app.infrastructure.ports.llm import LLMPort
+from app.infrastructure.ports.llm import LLMPort, LLMParams
 
 # 显式声明 embedding 配置取值（spec §5 ModelConfig）
 EMBEDDING_PROVIDER_OPENAI = "openai_compat"
 EMBEDDING_PROVIDER_LOCAL = "sentence_transformers"
 EMBEDDING_PROVIDER_HASHING = "hashing"
+
+# LLM 配置取值（spec §5 ModelConfig.provider，默认 mock）
+LLM_PROVIDER_OPENAI = "openai_compat"
+LLM_PROVIDER_MOCK = "mock"
 
 
 async def get_or_create_singleton(session: AsyncSession) -> ModelConfig:
@@ -143,3 +148,74 @@ def build_embedder(cfg: EmbeddingConfig, level: int) -> Embedder | None:
 def make_embedder_factory(cfg: EmbeddingConfig):
     """把配置快照绑定成 EmbedderRuntime 需要的 factory(level) -> Embedder | None。"""
     return lambda level: build_embedder(cfg, level)
+
+
+@dataclass(frozen=True)
+class LLMConfig:
+    """LLM 配置的进程内快照（API Key 已解密，仅驻留内存）。
+
+    与 `EmbeddingConfig` 同理：ORM 对象绑在会话上，而运行时跨越请求生命周期。
+    """
+
+    revision: int = 0
+    provider: str = LLM_PROVIDER_MOCK
+    model: str = "mock-1"
+    base_url: str | None = None
+    api_key: str | None = None
+    temperature: float = 0.7
+    top_p: float = 1.0
+    max_tokens: int = 2048
+
+
+def llm_config(cfg: ModelConfig) -> LLMConfig:
+    """从 ModelConfig 抽出 LLM 相关配置；API Key 在此解密（spec §8.8）。"""
+    key = decrypt_api_key(cfg.api_key_encrypted) if cfg.api_key_encrypted else None
+    return LLMConfig(
+        revision=cfg.revision,
+        provider=cfg.provider or LLM_PROVIDER_MOCK,
+        model=cfg.model or "mock-1",
+        base_url=cfg.base_url,
+        api_key=key,
+        temperature=cfg.temperature,
+        top_p=cfg.top_p,
+        max_tokens=cfg.max_tokens,
+    )
+
+
+def build_llm(cfg: LLMConfig, level: int) -> LLMPort | None:
+    """构建**指定级别**的 LLM 提供方；该级不可用返回 None，由 LLMRuntime 降级。
+
+    降级链（M10 / spec §9）：
+      0 = 配置首选（OpenAI 兼容，需 provider=openai_compat 且有 API Key）
+      1 = Mock 兜底
+
+    首选不可用时 level 0 直接给出 Mock —— 这正是 spec §9「无 API Key → 解析为
+    MockProvider」的落点。它是否算降级由 `LLMRuntime.degraded` 依据配置期望值判断。
+    """
+    if level == LLM_LEVEL_PRIMARY:
+        if cfg.provider == LLM_PROVIDER_OPENAI and cfg.api_key:
+            return OpenAICompatProvider(
+                base_url=cfg.base_url or "",
+                api_key=cfg.api_key,
+            )
+        return MockLLMProvider()
+
+    if level == LLM_LEVEL_MOCK:
+        return MockLLMProvider()
+
+    return None
+
+
+def make_llm_factory(cfg: LLMConfig):
+    """把配置快照绑定成 LLMRuntime 需要的 factory(level) -> LLMPort | None。"""
+    return lambda level: build_llm(cfg, level)
+
+
+def llm_params(cfg: LLMConfig) -> LLMParams:
+    """把配置快照转成单次调用参数（spec §5 ModelConfig 的 model / temperature / …）。"""
+    return LLMParams(
+        model=cfg.model,
+        temperature=cfg.temperature,
+        top_p=cfg.top_p,
+        max_tokens=cfg.max_tokens,
+    )

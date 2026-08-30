@@ -15,17 +15,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.infrastructure.adapters.vectorstore.chroma_store import ChromaVectorStore
 from app.infrastructure.embedder_runtime import EmbedderRuntime
+from app.infrastructure.llm_runtime import LLMRuntime
 from app.infrastructure.ports.vectorstore import VectorStore
 from app.infrastructure.registry import (
     EmbeddingConfig,
+    LLMConfig,
     embedding_config,
     get_or_create_singleton,
+    llm_config,
     make_embedder_factory,
+    make_llm_factory,
 )
 
 _vector_store: VectorStore | None = None
 _embedder_runtime: EmbedderRuntime | None = None
 _embedder_revision: int | None = None
+_llm_runtime: LLMRuntime | None = None
+_llm_revision: int | None = None
 
 
 def default_chroma_dir() -> Path:
@@ -85,9 +91,48 @@ async def refresh_embedder_config(session: AsyncSession) -> bool:
     return True
 
 
+def get_llm_runtime() -> LLMRuntime:
+    """LLM 提供方运行时单例（M10 的降级链载体）。
+
+    与 `get_embedder_runtime()` 同构：初次访问时尚无配置，factory 全部返回 Mock；
+    待 `refresh_llm_config()` 载入配置后才会解析出真正的首选提供方。
+    """
+    global _llm_runtime
+    if _llm_runtime is None:
+        _llm_runtime = LLMRuntime(make_llm_factory(LLMConfig()))
+    return _llm_runtime
+
+
+def set_llm_runtime(runtime: LLMRuntime | None) -> None:
+    """替换运行时（测试注入，或配置变更后重建）。"""
+    global _llm_runtime, _llm_revision
+    _llm_runtime = runtime
+    _llm_revision = None
+
+
+async def refresh_llm_config(session: AsyncSession) -> bool:
+    """按 ModelConfig.revision 刷新 LLM 配置；返回是否发生了变化。
+
+    revision 变化（管理员改了模型配置）时把降级级别重置回首选，让下一次调用
+    从最高级重新解析 —— 否则改完配置仍会沿用降级后的级别（spec §4.2 硬约束 4）。
+    """
+    global _llm_revision
+
+    cfg = llm_config(await get_or_create_singleton(session))
+    if _llm_revision == cfg.revision:
+        return False
+
+    get_llm_runtime().rebind(make_llm_factory(cfg), expected=cfg.provider)
+    _llm_revision = cfg.revision
+    return True
+
+
 def reset_runtime() -> None:
     """仅供测试：清空全部进程级单例。"""
     global _vector_store, _embedder_runtime, _embedder_revision
+    global _llm_runtime, _llm_revision
     _vector_store = None
     _embedder_runtime = None
     _embedder_revision = None
+    _llm_runtime = None
+    _llm_revision = None

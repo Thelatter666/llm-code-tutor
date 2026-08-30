@@ -12,7 +12,11 @@ from app.core.errors import ApiError, install_exception_handlers
 from app.core.logging import setup_logging
 from app.core.responses import install_request_id, ok
 from app.infrastructure.persistence.db import SessionFactory, init_db
-from app.infrastructure.runtime import get_embedder_runtime, refresh_embedder_config
+from app.infrastructure.runtime import (
+    get_embedder_runtime,
+    refresh_embedder_config,
+    refresh_llm_config,
+)
 from app.routers import admin_knowledge, admin_model_config, knowledge
 from app.routers import auth as auth_router
 from app.services.model_config_service import ModelConfigService
@@ -46,6 +50,8 @@ async def lifespan(_app: FastAPI):
 
     async with SessionFactory() as session:
         await refresh_embedder_config(session)
+        # M10：LLM 降级链同样按 revision 绑定配置（spec §4.2 硬约束 4）
+        await refresh_llm_config(session)
         # spec §8.7 步骤 4：启动时校验「配置与索引不一致」并告警
         complaints = await ModelConfigService(session).check_embedding_consistency()
         for warning in complaints:
