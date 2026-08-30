@@ -1,13 +1,14 @@
 """全量表定义（spec §5 共 14 张）。
 
-P0 落 User / ModelConfig / AuditLog；P1 追加 KnowledgeBase / Document / Chunk。
+P0 落 User / ModelConfig / AuditLog；P1 追加 KnowledgeBase / Document / Chunk；
+P2 追加 Conversation / Message。
 建表走 create_all，不做迁移（ADR-0006）。
 """
 
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Float, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Float, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.domain.knowledge.status import DOC_PENDING, KB_READY
@@ -129,3 +130,50 @@ class Chunk(Base):
     embed_model: Mapped[str | None] = mapped_column(String, nullable=True)
     vector_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_now)
+
+
+class Conversation(Base):
+    """会话：一次完整的答疑对话容器，包含多条消息（CONTEXT.md）。
+
+    与「对话（Chat）」区分：Chat 指功能，Conversation 指数据实体。
+    """
+
+    __tablename__ = "conversations"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    title: Mapped[str] = mapped_column(String, default="新的对话")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_now)
+    # 会话列表按最近活动排序，onupdate 保证每次新消息都推进它
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime, default=_now, onupdate=_now, index=True
+    )
+
+
+class Message(Base):
+    """消息：会话中的单条发言（spec §5）。
+
+    `citations` / `token_usage` / `truncated` / `anti_plagiarism_mode` /
+    `blocked_by_policy` 是 P2 的四组关键落库字段，分别对应 spec §7.2 步骤 6、
+    §6.1 `done` 事件的用量、§8.1 的中断标记与 §7.4 的拦截率度量。
+    """
+
+    __tablename__ = "messages"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    conversation_id: Mapped[str] = mapped_column(String, index=True)
+    role: Mapped[str] = mapped_column(String)  # user | assistant | system
+    content: Mapped[str] = mapped_column(Text)
+    # spec §7.2 步骤 6：命中的 chunk_id 写入 citations，前端点击可溯源
+    citations: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # 流末 Usage 元素；estimated=true 表示 Mock 估算（估算用量 EstimatedUsage）
+    token_usage: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    model: Mapped[str | None] = mapped_column(String, nullable=True)
+    provider: Mapped[str | None] = mapped_column(String, nullable=True)
+    # spec §8.1：流被中断时已生成内容仍落库并置 true
+    truncated: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 当次生效的防抄袭档位；豁免意图为 null（ADR-0005）
+    anti_plagiarism_mode: Mapped[str | None] = mapped_column(String, nullable=True)
+    # 底线拦截：本次请求是否触发防抄袭底线（spec §7.4）
+    blocked_by_policy: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_now, index=True)
