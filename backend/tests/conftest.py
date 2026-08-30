@@ -10,6 +10,9 @@ from sqlalchemy.pool import StaticPool
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("JWT_SECRET", "test-secret-for-pytest-only-32bytes-min")
 os.environ.setdefault("APP_SECRET", Fernet.generate_key().decode())
+# Mock 流式延迟（P3 并入任务 1）会让既有用例按增量数 × 30ms 变慢：套件级显式
+# 置 0。Settings 默认值（30）不动，延迟用例经构造参数显式开延迟自行验证。
+os.environ.setdefault("MOCK_TOKEN_DELAY_MS", "0")
 
 
 @pytest_asyncio.fixture

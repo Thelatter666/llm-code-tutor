@@ -2,6 +2,7 @@ import asyncio
 import re
 from collections.abc import AsyncIterator
 
+from app.core.config import get_settings
 from app.infrastructure.ports.llm import (
     ChatMessage,
     Completion,
@@ -70,7 +71,17 @@ class MockLLMProvider:
     引导话术。若 Mock 无视档位，演示与联调时「防抄袭是否生效」将完全无法观察。
 
     本实例被所有请求共享，**不保存任何 per-request 状态**。
+
+    流式逐字延迟（`Settings.mock_token_delay_ms`，默认 30ms）：无 API Key 演示时
+    让浏览器看得到逐字输出、「停止」按钮有可截断的窗口。显式给 `token_delay_ms`
+    可覆盖设置（测试与特殊部署用）；只作用于 `stream()`，`complete()` 是非流式
+    调用，绝不引入延迟。
     """
+
+    def __init__(self, token_delay_ms: float | None = None):
+        if token_delay_ms is None:
+            token_delay_ms = get_settings().mock_token_delay_ms
+        self._token_delay = max(token_delay_ms, 0) / 1000
 
     @property
     def name(self) -> str:
@@ -150,7 +161,8 @@ class MockLLMProvider:
             if cancel is not None and cancel.is_set():
                 break
             yield TextDelta(ch)
-            await asyncio.sleep(0)
+            # delay=0 时 sleep(0) 让出事件循环，与引入延迟前行为一致
+            await asyncio.sleep(self._token_delay)
         # 被中断时仍发出用量，保证调用方能拿到 done 所需的 usage
         yield self._usage(text, messages)
 

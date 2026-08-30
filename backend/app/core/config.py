@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,6 +23,10 @@ class Settings(BaseSettings):
     upload_dir: str = "data/uploads"
     # 索引并发上限（spec §3.2 权衡 14）
     index_concurrency: int = 1
+    # Mock 提供方流式逐字延迟（毫秒）。无 API Key 演示时让浏览器看得到逐字输出、
+    # 「停止」按钮有可截断的窗口；0 表示不限速。只作用于 Mock 的 stream()，
+    # 不触碰 OpenAI 兼容链路，complete() 非流式调用也不引入延迟。
+    mock_token_delay_ms: int = Field(default=30, ge=0)
 
 
 @lru_cache

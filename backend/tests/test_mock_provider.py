@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 import pytest
 
@@ -180,3 +181,62 @@ async def test_extractive_generation_skips_markdown_headings():
     )
     assert "依据知识库片段：冒泡排序重复比较相邻元素。" in text
     assert "排序算法讲义我不能" not in text
+
+
+# ------------------------------------------------- 流式延迟（P2 遗留项裁定，并入 P3）
+#
+# 问题：Mock 约 0.1s 生成完毕，浏览器点「停止」几乎总来不及截断，无 API Key
+# 演示看不到流式输出。要求：stream() 在每个 TextDelta 之间 sleep；complete()
+# 是非流式调用，绝不受影响；只影响 Mock 提供方。
+#
+# 套件级默认经 conftest 显式置 0（MOCK_TOKEN_DELAY_MS=0），延迟用例用构造参数
+# 显式开延迟 —— 不改 Settings 默认值（30），也不为提速删掉延迟实现。
+
+
+def test_settings_declares_mock_token_delay_with_default_30():
+    """Settings 必须声明 mock_token_delay_ms 且默认 30（裁定值）。
+
+    经 model_fields 验证声明默认值，不受套件环境变量置 0 的影响。
+    """
+    from app.core.config import Settings
+
+    field = Settings.model_fields["mock_token_delay_ms"]
+    assert field.default == 30
+
+
+@pytest.mark.asyncio
+async def test_stream_takes_noticeably_longer_when_delay_is_enabled():
+    provider = MockLLMProvider(token_delay_ms=5)
+    start = time.perf_counter()
+    text = await collect_text(provider.stream([ChatMessage("user", "讲讲递归")], PARAMS))
+    elapsed = time.perf_counter() - start
+
+    assert len(text) >= 30, "前提：渲染文本足够长，延迟才可测"
+    assert elapsed >= 0.15, "≥30 个增量 × 5ms，总耗时必须显著大于 0"
+
+
+@pytest.mark.asyncio
+async def test_complete_is_not_delayed():
+    """complete() 非流式：即便每字 50ms 的延迟开着，也必须立刻返回。"""
+    provider = MockLLMProvider(token_delay_ms=50)
+    start = time.perf_counter()
+    await provider.complete(MESSAGES, PARAMS)
+    elapsed = time.perf_counter() - start
+
+    assert elapsed < 0.1
+
+
+@pytest.mark.asyncio
+async def test_cancelled_stream_does_not_crawl_through_the_delay():
+    """中断前置位：零个增量、零次睡眠，不能被延迟拖慢中断路径。"""
+    provider = MockLLMProvider(token_delay_ms=50)
+    cancel = asyncio.Event()
+    cancel.set()
+
+    start = time.perf_counter()
+    chunks = [c async for c in provider.stream(MESSAGES, PARAMS, cancel=cancel)]
+    elapsed = time.perf_counter() - start
+
+    assert not [c for c in chunks if isinstance(c, TextDelta)]
+    assert isinstance(chunks[-1], Usage)
+    assert elapsed < 0.1
