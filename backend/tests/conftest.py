@@ -36,6 +36,17 @@ async def session(engine):
         yield s
 
 
+@pytest_asyncio.fixture
+async def session_factory(engine):
+    """后台任务用的会话工厂，与 `_bind_session_factory` 绑到同一个库上。
+
+    需要独立会话的用例（例如「检索后重新读库验证」）应当注入本 fixture，
+    而不要自己拿 `session.bind` 造 —— `AsyncSession.bind` 每次返回新的引擎
+    包装，绕开它建的会话会落到另一个库上。
+    """
+    return async_sessionmaker(engine, expire_on_commit=False)
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def _bind_session_factory(engine):
     """把后台任务的会话工厂绑到测试库上。
