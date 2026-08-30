@@ -1,8 +1,8 @@
 import pytest
 
 from app.infrastructure.adapters.vectorstore.chroma_store import (
-    COLLECTION_NAME,
     ChromaVectorStore,
+    collection_name,
 )
 from app.infrastructure.ports.vectorstore import VectorRecord, VectorStore
 
@@ -35,9 +35,14 @@ def test_satisfies_vector_store_port(store):
     assert isinstance(store, VectorStore)
 
 
-def test_collection_name_is_single_shared_collection():
-    """spec §3.2 权衡 4：单集合 + kb_id 元数据过滤（Chroma 要求 3–512 字符）。"""
-    assert COLLECTION_NAME == "course_chunks"
+def test_collection_is_partitioned_by_dimension():
+    """spec §3.2 权衡 4：单集合 + kb_id 元数据过滤；集合名带维度后缀。
+
+    维度后缀是必需的：Chroma 集合首次写入后维度即固定，**删光记录也不重置**。
+    不分区的话，切换 embedding 模型后即便全量重建，新维度的 upsert 仍会被拒。
+    """
+    assert collection_name(384) == "course_chunks_d384"
+    assert len(collection_name(384)) >= 3  # Chroma 要求 3–512 字符
 
 
 @pytest.mark.asyncio
@@ -121,3 +126,69 @@ async def test_data_survives_client_reopen(tmp_path):
 
     reopened = ChromaVectorStore(persist_dir=tmp_path / "chroma")
     assert await reopened.list_ids("kb1") == ["v1"]
+
+
+# --- 维度切换：spec §8.7 的强制重建必须真能换维度 -------------------------------
+
+
+def _rec_dim(vid: str, kb: str, dim: int, unit: int = 0) -> VectorRecord:
+    vec = [0.0] * dim
+    vec[unit % dim] = 1.0
+    return VectorRecord(
+        vector_id=vid,
+        kb_id=kb,
+        document_id="d1",
+        embedding=vec,
+        content=f"内容-{vid}",
+    )
+
+
+@pytest.mark.asyncio
+async def test_rebuild_with_a_different_dimension_succeeds(store):
+    """回归：删除全部记录后换维度，upsert 必须仍能成功。
+
+    不按维度分区时这里会抛
+    `InvalidArgumentError: Collection expecting embedding with dimension of 4, got 8`。
+    """
+    await store.upsert([_rec_dim("v1", "kb1", 4)])
+    await store.delete_by_kb("kb1")
+    assert await store.list_ids("kb1") == []
+
+    await store.upsert([_rec_dim("v2", "kb1", 8)])
+    hits = await store.query([1.0] + [0.0] * 7, top_k=5, kb_ids=["kb1"])
+    assert [h.vector_id for h in hits] == ["v2"]
+
+
+@pytest.mark.asyncio
+async def test_query_with_a_dimension_that_was_never_indexed_returns_empty(store):
+    """用未重建过的模型检索 → 空结果（而不是抛错）。"""
+    await store.upsert([_rec_dim("v1", "kb1", 4)])
+    assert await store.query([1.0] * 8, top_k=5, kb_ids=["kb1"]) == []
+
+
+@pytest.mark.asyncio
+async def test_list_ids_spans_dimensions_for_gc(store):
+    """未重建的知识库其向量还在旧维度集合里，GC 必须能枚举到。"""
+    await store.upsert([_rec_dim("v1", "kb1", 4)])
+    await store.upsert([_rec_dim("v2", "kb1", 8)])
+    assert sorted(await store.list_ids("kb1")) == ["v1", "v2"]
+
+
+@pytest.mark.asyncio
+async def test_delete_by_kb_clears_every_dimension(store):
+    await store.upsert([_rec_dim("v1", "kb1", 4)])
+    await store.upsert([_rec_dim("v2", "kb1", 8)])
+    await store.delete_by_kb("kb1")
+    assert await store.list_ids("kb1") == []
+
+
+@pytest.mark.asyncio
+async def test_empty_collections_are_pruned_after_cleanup(store, tmp_path):
+    """维度切换留下空集合会占空间且无法再用，删空后应清掉。"""
+    await store.upsert([_rec_dim("v1", "kb1", 4)])
+    await store.upsert([_rec_dim("v2", "kb1", 8)])
+    await store.delete_ids(["v1", "v2"])
+
+    reopened = ChromaVectorStore(persist_dir=tmp_path / "chroma")
+    names = reopened.list_collection_names()
+    assert len(names) <= 1, f"空集合未被清理：{names}"

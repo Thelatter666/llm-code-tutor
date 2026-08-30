@@ -6,6 +6,7 @@ from app.domain.knowledge.status import DOC_READY, KB_READY, KB_REINDEXING
 from app.infrastructure.adapters.embedding.sentence_transformer import (
     local_embed_available,
 )
+from app.infrastructure.adapters.vectorstore.chroma_store import ChromaVectorStore
 from app.infrastructure.embedder_runtime import EmbedderRuntime
 from app.infrastructure.persistence.models import (
     Chunk,
@@ -278,6 +279,50 @@ async def test_config_change_rebinds_the_runtime(session):
     assert await refresh_embedder_config(session) is True
     assert get_embedder_runtime() is first  # 单例不变，但 factory 被 rebind
     assert first.level == 0
+
+
+@pytest.mark.asyncio
+async def test_rebuild_survives_a_dimension_change(session, tmp_path):
+    """回归：切换后维度不同，重建必须仍能成功。
+
+    Chroma 集合首次写入后维度即固定，删光记录也不重置 —— 不按维度分区集合时，
+    这里会在 upsert 阶段抛
+    `InvalidArgumentError: Collection expecting embedding with dimension of X, got Y`。
+    """
+
+    class Dim4Embedder(FakeEmbedder):
+        name = "fake-4"
+        model = "fake-4"
+
+        def __init__(self):
+            super().__init__(dimension=4)
+
+    class Dim8Embedder(FakeEmbedder):
+        name = "fake-8"
+        model = "fake-8"
+
+        def __init__(self):
+            super().__init__(dimension=8)
+
+    source = tmp_path / "a.txt"
+    source.write_text("重建用的正文内容。" * 60, encoding="utf-8")
+    await _seed(session, chunks=2, with_text=source, tmp_path=tmp_path)
+
+    store = ChromaVectorStore(persist_dir=tmp_path / "chroma")
+    await RebuildService(
+        session, embedder=_runtime(Dim4Embedder()), vector_store=store
+    ).rebuild("kb1")
+
+    session.expunge_all()
+    assert (await session.execute(select(Chunk))).scalars().all()
+
+    await RebuildService(
+        session, embedder=_runtime(Dim8Embedder()), vector_store=store
+    ).rebuild("kb1")
+
+    session.expunge_all()
+    rows = (await session.execute(select(Chunk))).scalars().all()
+    assert rows and {r.embed_model for r in rows} == {"fake-8"}
 
 
 @pytest.mark.asyncio
