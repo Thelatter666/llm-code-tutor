@@ -337,7 +337,7 @@ llm-code-tutor/
 
 `ChatService.stream_reply()`：落 user message → 装配 RAG 并发 `citation` → 渲染 prompt（防抄袭档位 + 底线 + 上下文 + 历史）→ 流式转发 token，每 token 检查 cancel flag → 落 assistant message（citations / token_usage / model / provider / anti_plagiarism_mode / blocked_by_policy）→ 发 `done` → 写 `AuditLog(action=chat)`。
 
-**历史截断规则**（固定值，不开放配置）：按时间倒序累加最近轮次，累计 token 超过 **4000**，或轮数超过 **10 轮**（一问一答计一轮）即停止累加；截断后若首轮被丢弃，改为保留最后一轮以保证上下文连贯。
+**历史截断规则**（固定值，不开放配置）：按时间倒序累加最近轮次，累计 token 超过 **4000**，或轮数超过 **10 轮**（一问一答计一轮）即停止累加；若累加后一轮都未纳入（即最近一轮本身已超出预算），则强制纳入最近一轮，保证上下文不断裂。
 
 流中断发 `error`，已生成内容仍落库并标记 `truncated=true`。无论正常结束还是异常中断，`AuditLog(action=chat)` 均在 `finally` 中写入。
 
