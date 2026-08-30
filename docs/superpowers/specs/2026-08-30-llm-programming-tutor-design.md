@@ -438,7 +438,7 @@ llm-code-tutor/
 
 | 批次 | 内容 | 依赖 |
 |---|---|---|
-| P0 | 骨架、单 worker 启动脚本、SQLite WAL、用户鉴权、审计日志、统一响应、Provider 抽象 + Mock、`make seed`（幂等写入初始 admin + 习题种子）、**执行 `uipro init --ai codebuddy` 建立前端设计基线** | — |
+| P0 | 骨架、单 worker 启动脚本、SQLite WAL、用户鉴权、审计日志、统一响应、Provider 抽象 + Mock、`make seed`（幂等写入初始 admin + 默认 ModelConfig 行）、**执行 `uipro init --ai codebuddy` 建立前端设计基线** | — |
 | P1 | RAG 知识库：文档接入 / 切分 / 向量化 / 检索 + 管理端（含删除顺序与孤儿向量 GC、embedding 切换 409 流程） | P0 |
 | P2 | AI 答疑对话：SSE + RAG 增强 + 防抄袭三档 + 意图豁免 + 拦截率统计 | P1 |
 | P3 | 代码解析与辅导：静态解析 + AI 讲解（豁免档位） | P0 |
