@@ -51,6 +51,8 @@
 | 2026-08-30 | P0 基座实施（`docs/superpowers/plans/2026-08-30-p0-foundation.md` 的 Task 1–15） | 用户预先授权：每个 Task 完成且全量测试通过后，可直接按 Task 粒度 `git commit`，无需逐次请示。**`merge` 不在本次授权内**，仍需单独下令。 |
 | 2026-08-30 | P1 RAG 知识库实施（分支 `feat/p1-rag-knowledge-base`） | 用户预先授权：每个 Task 完成且全量测试通过后，可直接按 Task 粒度 `git commit`，无需逐次请示。**`merge` 不在本次授权内**，仍需单独下令。 |
 | 2026-08-30 | P2 答疑对话与防抄袭实施（分支 `feat/p2-chat-anti-plagiarism`） | 用户预先授权：每个 Task 完成且全量测试通过后，可直接按 Task 粒度 `git commit`，无需逐次请示。**`merge` 不在本次授权内**，仍需单独下令。 |
+| 2026-08-31 | P3 代码解析与辅导（分支 `feat/p3-code-review`，含并入的 Mock 流式延迟、前端 Markdown 渲染、spec §8.1 歧义改写） | 用户预先授权：每个 Task 完成且全量测试通过后，可直接按 Task 粒度 `git commit`，无需逐次请示。**`merge` 不在本次授权内**，仍需单独下令。 |
+| 2026-08-31 | P4 在线编辑器与受限执行器（分支 `feat/p4-editor-sandbox`） | 用户预先授权：每个 Task 完成且全量测试通过后，可直接按 Task 粒度 `git commit`，无需逐次请示。**`merge` 不在本次授权内**，仍需单独下令。 |
 
 ## 产出物落盘约定
 
