@@ -49,6 +49,7 @@
 | 日期 | 授权范围 | 授权内容 |
 |---|---|---|
 | 2026-08-30 | P0 基座实施（`docs/superpowers/plans/2026-08-30-p0-foundation.md` 的 Task 1–15） | 用户预先授权：每个 Task 完成且全量测试通过后，可直接按 Task 粒度 `git commit`，无需逐次请示。**`merge` 不在本次授权内**，仍需单独下令。 |
+| 2026-08-30 | P1 RAG 知识库实施（分支 `feat/p1-rag-knowledge-base`） | 用户预先授权：每个 Task 完成且全量测试通过后，可直接按 Task 粒度 `git commit`，无需逐次请示。**`merge` 不在本次授权内**，仍需单独下令。 |
 
 ## 产出物落盘约定
 
