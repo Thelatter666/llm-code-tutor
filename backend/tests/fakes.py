@@ -107,6 +107,17 @@ class FakeEmbedder:
         return [_fake_vector(t, self.dimension) for t in texts]
 
 
+class ConstantEmbedder(FakeEmbedder):
+    """所有文本返回同一向量：相似度恒为 1。
+
+    API 层测试关心的是链路接线，不是向量质量 —— 向量质量由
+    test_retrieval_quality.py 用真模型覆盖。用常量向量可让阈值判定完全确定。
+    """
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return [[1.0] + [0.0] * (self.dimension - 1) for _ in texts]
+
+
 class SentinelEmbedder(FakeEmbedder):
     """哨兵级替身：ADR-0004 要求其产出不注入 prompt。"""
 

@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from app.core.deps import CurrentRidDep, require_admin
 from app.core.errors import ApiError, install_exception_handlers
 from app.core.responses import install_request_id, ok
-from app.routers import auth as auth_router
+from app.routers import admin_knowledge, admin_model_config, auth as auth_router, knowledge
 
 DIST_DIR = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
@@ -17,6 +17,9 @@ install_request_id(app)
 install_exception_handlers(app)
 
 app.include_router(auth_router.router)
+app.include_router(knowledge.router)
+app.include_router(admin_knowledge.router)
+app.include_router(admin_model_config.router)
 
 _admin = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 

@@ -124,6 +124,18 @@ class KnowledgeBaseService:
             raise ApiError(4040, "文档不存在")
         return doc
 
+    async def list_chunks(self, document_id: str) -> list[Chunk]:
+        """切片预览（spec §6.2）：按 ordinal 升序。"""
+        return list(
+            (
+                await self._session.execute(
+                    select(Chunk)
+                    .where(Chunk.document_id == document_id)
+                    .order_by(Chunk.ordinal)
+                )
+            ).scalars().all()
+        )
+
     async def delete(
         self,
         kb_id: str,
