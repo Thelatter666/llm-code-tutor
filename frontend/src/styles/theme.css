@@ -1,0 +1,81 @@
+/* 设计基线落地：frontend/docs/ui-baseline.md
+ * 由 uiuxpromax design system 生成（风格：AI-Native UI）
+ * 覆盖 Element Plus 主色系，使其与基线一致
+ */
+
+:root {
+  --color-primary: #7c3aed;
+  --color-on-primary: #ffffff;
+  --color-secondary: #a78bfa;
+  --color-on-secondary: #0f172a;
+  --color-accent: #0891b2;
+  --color-on-accent: #000000;
+  --color-background: #faf5ff;
+  --color-foreground: #1e1b4b;
+  --color-card: #ffffff;
+  --color-card-foreground: #1e1b4b;
+  --color-muted: #eceef9;
+  --color-muted-foreground: #475569;
+  --color-border: #ddd6fe;
+  --color-destructive: #dc2626;
+  --color-on-destructive: #ffffff;
+  --color-ring: #7c3aed;
+
+  --el-color-primary: var(--color-primary);
+  --el-color-success: #16a34a;
+  --el-color-warning: #d97706;
+  --el-color-danger: var(--color-destructive);
+  --el-color-error: var(--color-destructive);
+  --el-bg-color: var(--color-card);
+  --el-text-color-primary: var(--color-foreground);
+  --el-text-color-regular: var(--color-foreground);
+  --el-text-color-secondary: var(--color-muted-foreground);
+  --el-border-color: var(--color-border);
+  --el-border-color-light: var(--color-border);
+  --el-fill-color-light: var(--color-muted);
+  --el-border-radius-base: 8px;
+
+  --font-sans: Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei',
+    sans-serif;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--color-foreground);
+  background: var(--color-background);
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.3;
+  margin: 0;
+}
+
+/* 基线要求：可点击元素必须有 cursor: pointer */
+button,
+[role='button'],
+.el-button,
+.el-link {
+  cursor: pointer;
+}
+
+/* 基线要求：尊重 prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
