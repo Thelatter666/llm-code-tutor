@@ -27,13 +27,17 @@ from app.domain.knowledge.status import (
     DOC_REINDEXING,
     KB_READY,
 )
-from app.infrastructure.adapters.document.parsers import parse_document
 from app.infrastructure.concurrency import index_slot, kb_lock
 from app.infrastructure.embedder_runtime import EmbedderRuntime
 from app.infrastructure.persistence import db
 from app.infrastructure.persistence.models import Chunk, Document, KnowledgeBase
+from app.infrastructure.ports.document import DocumentParser
 from app.infrastructure.ports.vectorstore import VectorRecord, VectorStore
-from app.infrastructure.runtime import get_embedder_runtime, get_vector_store
+from app.infrastructure.runtime import (
+    get_document_parser,
+    get_embedder_runtime,
+    get_vector_store,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,11 +52,15 @@ class IndexingService:
         embedder: EmbedderRuntime | None = None,
         vector_store: VectorStore | None = None,
         session_factory: Callable | None = None,
+        parser: DocumentParser | None = None,
     ):
         self._session = session
         self._embedder = embedder or get_embedder_runtime()
         self._vectors = vector_store or get_vector_store()
         self._factory = session_factory
+        # 解析经端口注入（spec §4.2 硬约束 2 / H-3）：缺省走 runtime 单例，
+        # 服务层不 import 任何具体适配器
+        self._parser = parser or get_document_parser()
 
     async def index_document(self, document_id: str) -> None:
         """索引一份文档；失败置 `status=failed` + `error_msg`，不影响其余文档。"""
@@ -133,7 +141,9 @@ class IndexingService:
             if not uri:
                 raise FileNotFoundError("源文件路径缺失")
 
-            parsed = await run_in_threadpool(parse_document, Path(uri), doc.source_type)
+            parsed = await run_in_threadpool(
+                self._parser.parse, Path(uri), doc.source_type
+            )
             chunks = await run_in_threadpool(split_text, parsed.text)
 
             doc.chunk_total = len(chunks)

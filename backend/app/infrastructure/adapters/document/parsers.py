@@ -8,10 +8,11 @@
 """
 
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 
 from app.domain.knowledge.errors import EmptyDocumentError
 from app.domain.knowledge.status import SOURCE_DOCX, SOURCE_MD, SOURCE_PDF, SOURCE_TXT
-from app.infrastructure.ports.document import DocumentParser, ParsedDocument
+from app.infrastructure.ports.document import ParsedDocument
 
 NO_TEXT_HINT = "未提取到文本，可能是扫描版 PDF，请先做 OCR"
 
@@ -21,6 +22,13 @@ NO_TEXT_HINT = "未提取到文本，可能是扫描版 PDF，请先做 OCR"
 MIN_PDF_TEXT_CHARS = 10
 
 _ENCODING = "utf-8"
+
+
+@runtime_checkable
+class _FormatParser(Protocol):
+    """适配器内部的逐格式接缝：只认文件本身，不认来源类型。"""
+
+    def parse(self, path: Path) -> ParsedDocument: ...
 
 
 class PlainTextParser:
@@ -67,7 +75,7 @@ class DocxParser:
         return ParsedDocument(text=_require_non_empty(text), meta={"source_type": SOURCE_DOCX})
 
 
-_PARSERS: dict[str, DocumentParser] = {
+_PARSERS: dict[str, _FormatParser] = {
     SOURCE_TXT: PlainTextParser(),
     SOURCE_MD: PlainTextParser(),
     SOURCE_PDF: PdfParser(),
@@ -86,6 +94,18 @@ def parse_document(path: Path, source_type: str) -> ParsedDocument:
         raise FileNotFoundError(f"源文件不存在：{path}")
 
     return parser.parse(path)
+
+
+class MultiFormatDocumentParser:
+    """`DocumentParser` 端口的正式实现：按 source_type 派发到逐格式解析器。
+
+    与 `parse_document` 函数行为等价（本类就是它的类化外壳）；服务层经
+    `runtime.get_document_parser()` 注入本类，不再直连适配器模块
+    （spec §4.2 硬约束 2 / 健康检查 H-3）。
+    """
+
+    def parse(self, path: Path, source_type: str) -> ParsedDocument:
+        return parse_document(path, source_type)
 
 
 def _visible_chars(text: str) -> int:

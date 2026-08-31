@@ -172,3 +172,20 @@ def test_unknown_source_type_is_rejected(tmp_path):
 def test_empty_document_error_is_the_domain_one():
     """解析适配器抛的必须是领域异常，服务层才能统一映射。"""
     assert ParserEmptyError is EmptyDocumentError
+
+
+def test_multi_format_class_is_equivalent_to_function(tmp_path):
+    """A5（裁定 R4）：类化外壳与 parse_document 行为等价，不是只过 isinstance。"""
+    from app.infrastructure.adapters.document.parsers import (
+        MultiFormatDocumentParser,
+    )
+
+    p = tmp_path / "x.txt"
+    p.write_text("闭包。", encoding="utf-8")
+    parser = MultiFormatDocumentParser()
+    assert parser.parse(p, SOURCE_TXT) == parse_document(p, SOURCE_TXT)
+
+    with pytest.raises(ValueError):
+        parser.parse(p, "bin")
+    with pytest.raises(FileNotFoundError):
+        parser.parse(tmp_path / "nope.pdf", SOURCE_PDF)
