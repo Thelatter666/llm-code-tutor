@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import select
@@ -45,7 +45,7 @@ class AuthService:
         if not await run_in_threadpool(verify_password, password, user.hashed_password):
             raise ApiError(4010, "用户名或密码错误")
 
-        user.last_login_at = datetime.now(timezone.utc)
+        user.last_login_at = datetime.now(UTC)
         await self._session.flush()
         return user, create_access_token(user.id, user.role), create_refresh_token(user.id)
 

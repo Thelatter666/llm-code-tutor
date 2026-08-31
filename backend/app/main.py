@@ -17,9 +17,19 @@ from app.infrastructure.runtime import (
     refresh_embedder_config,
     refresh_llm_config,
 )
-from app.routers import admin_exercise, admin_knowledge, admin_model_config, admin_stats, admin_users, chat, code, exercise, knowledge
+from app.routers import (
+    admin_exercise,
+    admin_knowledge,
+    admin_model_config,
+    admin_stats,
+    admin_users,
+    chat,
+    code,
+    exercise,
+    knowledge,
+    mistake,
+)
 from app.routers import auth as auth_router
-from app.routers import mistake
 from app.services.model_config_service import ModelConfigService
 
 logger = logging.getLogger(__name__)

@@ -1,6 +1,6 @@
-from datetime import timezone
+from collections.abc import AsyncIterator
+from datetime import UTC
 from pathlib import Path
-from typing import AsyncIterator
 
 from sqlalchemy import DateTime, event
 from sqlalchemy.engine import Dialect
@@ -24,12 +24,12 @@ class UTCDateTime(TypeDecorator):
     def process_bind_param(self, value, dialect: Dialect):
         if value is None:
             return None
-        return value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value.astimezone(UTC).replace(tzinfo=None)
 
     def process_result_value(self, value, dialect: Dialect):
         if value is None:
             return None
-        return value.replace(tzinfo=timezone.utc)
+        return value.replace(tzinfo=UTC)
 
 
 class Base(DeclarativeBase):

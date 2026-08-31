@@ -18,7 +18,7 @@
 """
 
 from dataclasses import dataclass
-from typing import Optional, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 
 @dataclass(frozen=True)
@@ -32,7 +32,7 @@ class ExecutionResult:
     status: str
     stdout: str
     stderr: str
-    exit_code: Optional[int]
+    exit_code: int | None
     duration_ms: int
     limit_detail: dict
 

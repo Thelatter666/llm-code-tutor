@@ -40,7 +40,6 @@ def test_missing_dist_dir_is_noop(tmp_path):
 
 def test_unknown_api_path_returns_4040(tmp_path):
     """M12：catch-all 内的 api/ 分支可被真实触发——未注册的 /api 路径会落到这里。"""
-    from app.core.errors import ApiError
     from app.core.errors import install_exception_handlers
 
     app = FastAPI()

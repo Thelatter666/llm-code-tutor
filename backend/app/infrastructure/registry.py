@@ -24,7 +24,7 @@ from app.infrastructure.embedder_runtime import (
 from app.infrastructure.llm_runtime import LLM_LEVEL_MOCK, LLM_LEVEL_PRIMARY
 from app.infrastructure.persistence.models import MODEL_CONFIG_SINGLETON_ID, ModelConfig
 from app.infrastructure.ports.embedding import Embedder
-from app.infrastructure.ports.llm import LLMPort, LLMParams
+from app.infrastructure.ports.llm import LLMParams, LLMPort
 
 # 显式声明 embedding 配置取值（spec §5 ModelConfig）
 EMBEDDING_PROVIDER_OPENAI = "openai_compat"

@@ -96,7 +96,7 @@ async def update_embedding(
     body: EmbeddingConfigIn,
     session: SessionDep,
     rid: CurrentRidDep,
-    user: User = Depends(require_admin),
+    user: AdminDep,
 ):
     """切换 embedding 配置。
 
@@ -126,7 +126,7 @@ async def update_embedding(
 
 @router.get("/model-config/embedding-consistency")
 async def embedding_consistency(
-    session: SessionDep, rid: CurrentRidDep, user: User = Depends(require_admin)
+    session: SessionDep, rid: CurrentRidDep, user: AdminDep
 ):
     """spec §8.7 步骤 4：比对配置里的模型与切片上记的模型，供启动/巡检告警。"""
     current = get_embedder_runtime().current

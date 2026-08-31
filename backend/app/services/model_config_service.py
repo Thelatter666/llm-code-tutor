@@ -22,8 +22,8 @@ from app.infrastructure.adapters.embedding.sentence_transformer import (
     DEFAULT_LOCAL_EMBED_MODEL,
 )
 from app.infrastructure.embedder_runtime import EmbedderRuntime
-from app.infrastructure.persistence.models import Chunk, KnowledgeBase, ModelConfig
 from app.infrastructure.llm_runtime import LLM_LEVEL_MOCK, LLM_LEVEL_PRIMARY
+from app.infrastructure.persistence.models import Chunk, KnowledgeBase, ModelConfig
 from app.infrastructure.ports.llm import ChatMessage
 from app.infrastructure.registry import (
     EMBEDDING_PROVIDER_HASHING,

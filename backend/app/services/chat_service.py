@@ -17,7 +17,7 @@
 
 import logging
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 
@@ -313,9 +313,7 @@ class ChatService:
         """
         if conv.title == DEFAULT_CONVERSATION_TITLE and content.strip():
             conv.title = content.strip()[:TITLE_MAX_CHARS]
-        # 与 models.py / auth_service.py 保持一致用 timezone.utc —— ruff 的 UP017
-        # 建议 `datetime.UTC`，但那是 **模块** 级别名，本文件导入的是 datetime 类
-        conv.updated_at = datetime.now(timezone.utc)
+        conv.updated_at = datetime.now(UTC)
 
     async def _write_audit(
         self,

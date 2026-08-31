@@ -13,7 +13,7 @@ spec §9 要求「Embedding 失败 → 三级回退：OpenAI 兼容 → sentence
 """
 
 import logging
-from typing import Callable
+from collections.abc import Callable
 
 from fastapi.concurrency import run_in_threadpool
 

@@ -87,7 +87,7 @@ async def upload_document(
     rid: CurrentRidDep,
     user: AdminDep,
     tasks: BackgroundTasks,
-    file: UploadFile = File(...),
+    file: Annotated[UploadFile, File(...)],
 ):
     """上传 → 落盘 → 建 Document 行；索引在响应返回后由后台任务执行。
 

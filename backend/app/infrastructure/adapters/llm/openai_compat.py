@@ -1,6 +1,6 @@
 import asyncio
 import json
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 import httpx
 
@@ -69,43 +69,42 @@ class OpenAICompatProvider:
         headers = {"Authorization": f"Bearer {self._api_key}"}
         usage: Usage | None = None
 
-        async with self._client() as client:
-            async with client.stream(
-                "POST",
-                f"{self._base_url}/chat/completions",
-                json=self._payload(messages, params, stream=True),
-                headers=headers,
-            ) as resp:
-                if resp.status_code >= 400:
-                    raise ApiError(5021, "模型服务不可用")
+        async with self._client() as client, client.stream(
+            "POST",
+            f"{self._base_url}/chat/completions",
+            json=self._payload(messages, params, stream=True),
+            headers=headers,
+        ) as resp:
+            if resp.status_code >= 400:
+                raise ApiError(5021, "模型服务不可用")
 
-                async for line in resp.aiter_lines():
-                    if cancel is not None and cancel.is_set():
-                        break
-                    if not line.startswith("data:"):
-                        continue
-                    data = line[5:].strip()
-                    if data == "[DONE]":
-                        break
-                    try:
-                        obj = json.loads(data)
-                    except ValueError:
-                        continue
+            async for line in resp.aiter_lines():
+                if cancel is not None and cancel.is_set():
+                    break
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    obj = json.loads(data)
+                except ValueError:
+                    continue
 
-                    if raw := obj.get("usage"):
-                        usage = Usage(
-                            prompt_tokens=raw.get("prompt_tokens", 0),
-                            completion_tokens=raw.get("completion_tokens", 0),
-                            total_tokens=raw.get("total_tokens", 0),
-                            estimated=False,
-                        )
-                        continue
+                if raw := obj.get("usage"):
+                    usage = Usage(
+                        prompt_tokens=raw.get("prompt_tokens", 0),
+                        completion_tokens=raw.get("completion_tokens", 0),
+                        total_tokens=raw.get("total_tokens", 0),
+                        estimated=False,
+                    )
+                    continue
 
-                    choices = obj.get("choices") or []
-                    if not choices:
-                        continue
-                    if content := choices[0].get("delta", {}).get("content"):
-                        yield TextDelta(content)
+                choices = obj.get("choices") or []
+                if not choices:
+                    continue
+                if content := choices[0].get("delta", {}).get("content"):
+                    yield TextDelta(content)
 
         if usage is None:
             usage = Usage(0, 0, 0, estimated=True)

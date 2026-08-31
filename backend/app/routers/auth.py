@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, Request
 
 from app.core.deps import CurrentRidDep, SessionDep, get_current_user
@@ -9,6 +11,8 @@ from app.services.audit_service import AuditService
 from app.services.auth_service import AuthService
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
+
+UserDep = Annotated[User, Depends(get_current_user)]
 
 
 def _ip(request: Request) -> str | None:
@@ -54,13 +58,13 @@ async def refresh(body: RefreshIn, session: SessionDep, rid: CurrentRidDep):
 
 
 @router.get("/me")
-async def me(rid: CurrentRidDep, user: User = Depends(get_current_user)):
+async def me(rid: CurrentRidDep, user: UserDep):
     return ok(UserOut.model_validate(user).model_dump(), request_id=rid)
 
 
 @router.post("/logout")
 async def logout(
-    session: SessionDep, rid: CurrentRidDep, user: User = Depends(get_current_user)
+    session: SessionDep, rid: CurrentRidDep, user: UserDep
 ):
     await AuditService(session).record("logout", user_id=user.id, request_id=rid)
     await session.commit()

@@ -7,7 +7,7 @@ P4 追加 CodeSession / CodeRun；P5 追加 Exercise / Submission / MistakeBookE
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import JSON, Boolean, Float, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
@@ -15,7 +15,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.domain.chat.policy import DEFAULT_CONVERSATION_TITLE
 from app.domain.exercise.judging import STATUS_DRAFT
 from app.domain.knowledge.status import DOC_PENDING, KB_READY
-from app.infrastructure.persistence.db import UTCDateTime, Base
+from app.infrastructure.persistence.db import Base, UTCDateTime
 
 MODEL_CONFIG_SINGLETON_ID = "singleton"
 
@@ -25,7 +25,7 @@ def _uuid() -> str:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class User(Base):
