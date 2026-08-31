@@ -172,3 +172,21 @@
 
 - 阶段一：本文件 + AGENT.md 授权行 → 1 个 docs commit（Task 0），**停下等审阅**。
 - 阶段二：Task 1–7 各 1 commit（`chore(lint):`/`fix(m4,m5):`/`feat(m3):`/`refactor(h3):`/`docs(spec):`/`test: + docs(report)` 粒度，信息按仓库中文惯例）。
+
+---
+
+## 8. 阶段一总指挥裁定（2026-09-01，全部定稿并放行）
+
+R1–R6 全部采纳本计划提案，附加要求如下（执行时不可省）：
+
+| # | 附加要求 | 落点 |
+|---|---|---|
+| A1 | Task 3 量化口径：`/openapi.json` 前后 diff 必须**只增**——新增 response schema 组件可以，既有路径的 operation/参数/description 零变化；diff 统计（+N/−M）贴进完成报告 | Task 3 / 完成报告 |
+| A2 | Task 1 UP046（PEP 695）留 fallback：先写最小用例验证 `class ApiResponse[T](BaseModel)` 在 pydantic 2.13.5 运行时求值无恙，再全量改；若 class body 求值时 `T` 可见性出问题，退回 `TypeVar` + `# noqa: UP046`，不许卡死 | Task 1 ③ |
+| A3 | 全量测试计数不写死 995——新增用例后计数增长，以实跑为准；收尾必须一次干净串行全量 | 各 Task 验证门 |
+| A4 | R3 追加：改 message 前 `grep -rn "草稿不存在"` 全仓，断言该原文的测试一并同步（计划原只锁 test_code_run_service.py:304） | Task 2 |
+| A5 | R4 追加：`MultiFormatDocumentParser` 补一条「与 `parse_document` 行为等价」实测用例（同一文件走新类 vs 直调函数结果一致），不能只过 isinstance | Task 4 |
+| A6 | C3 变异：定位 `if kb_ids and not confirm: raise` 破坏条件；除目标用例外另跑 `test_unconfirmed_switch_does_not_persist` | Task 7 |
+
+R3 边界确认：Exercise.status「草稿」标签保留（CONTEXT.md 禁词限定于 CodeSession 行），该边界写进完成报告。
+硬门槛：H-3 红线 `grep infrastructure.adapters app/services/ = 0` + B1 回归（test_embedding_switch 全组 + 拆 409 门变异击杀）。
