@@ -34,7 +34,7 @@ from app.domain.chat.policy import (
     resolve_mode,
 )
 from app.infrastructure.cancellation import get_cancellation_registry
-from app.infrastructure.persistence.models import AuditLog, Conversation, Message
+from app.infrastructure.persistence.models import Conversation, Message
 from app.infrastructure.ports.llm import LLMParams, TextDelta, Usage
 from app.infrastructure.prompt_assembler import PromptAssembler
 from app.infrastructure.registry import get_or_create_singleton, llm_config, llm_params
@@ -353,8 +353,3 @@ class ChatService:
             await self._session.commit()
         except Exception:
             logger.exception("写入答疑审计日志失败 conversation=%s", conversation_id)
-
-    async def count_actions(self) -> int:
-        """仅供测试与统计：审计行数。"""
-        rows = await self._session.execute(select(AuditLog))
-        return len(list(rows.scalars().all()))
