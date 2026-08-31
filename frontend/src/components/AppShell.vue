@@ -1,6 +1,20 @@
 <script setup lang="ts">
 import { useAuthStore } from '@/stores/auth'
-import { Document, ChatDotRound, EditPen, MagicStick, Search, Reading, Notebook } from '@element-plus/icons-vue'
+import {
+  ChatDotRound,
+  DataBoard,
+  DataLine,
+  Document,
+  EditPen,
+  List,
+  MagicStick,
+  Notebook,
+  Reading,
+  Search,
+  Setting,
+  Tickets,
+  User,
+} from '@element-plus/icons-vue'
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -23,6 +37,12 @@ const NAV: NavItem[] = [
   { path: '/exercises', label: '习题练习', icon: Reading },
   { path: '/mistakes', label: '错题本', icon: Notebook },
   { path: '/admin/knowledge', label: '知识库管理', icon: Document, adminOnly: true },
+  { path: '/admin/exercises', label: '习题管理', icon: Tickets, adminOnly: true },
+  { path: '/admin/users', label: '用户管理', icon: User, adminOnly: true },
+  { path: '/admin/model-config', label: '模型配置', icon: Setting, adminOnly: true },
+  { path: '/admin/logs', label: '系统日志', icon: List, adminOnly: true },
+  { path: '/admin/overview', label: '仪表盘', icon: DataBoard, adminOnly: true },
+  { path: '/admin/anti-plagiarism', label: '防抄袭统计', icon: DataLine, adminOnly: true },
 ]
 
 const items = computed(() => NAV.filter((i) => !i.adminOnly || auth.isAdmin))

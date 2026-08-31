@@ -45,6 +45,37 @@ const router = createRouter({
           component: () => import('@/views/admin/KnowledgeAdminView.vue'),
           meta: { requiresAdmin: true },
         },
+        {
+          // P6 管理后台六页：全部懒加载独立 chunk + requiresAdmin（照既有先例）
+          path: 'admin/exercises',
+          component: () => import('@/views/admin/ExerciseAdminView.vue'),
+          meta: { requiresAdmin: true },
+        },
+        {
+          path: 'admin/users',
+          component: () => import('@/views/admin/UsersAdminView.vue'),
+          meta: { requiresAdmin: true },
+        },
+        {
+          path: 'admin/model-config',
+          component: () => import('@/views/admin/ModelConfigView.vue'),
+          meta: { requiresAdmin: true },
+        },
+        {
+          path: 'admin/logs',
+          component: () => import('@/views/admin/LogsView.vue'),
+          meta: { requiresAdmin: true },
+        },
+        {
+          path: 'admin/overview',
+          component: () => import('@/views/admin/OverviewView.vue'),
+          meta: { requiresAdmin: true },
+        },
+        {
+          path: 'admin/anti-plagiarism',
+          component: () => import('@/views/admin/AntiPlagiarismStatsView.vue'),
+          meta: { requiresAdmin: true },
+        },
       ],
     },
     { path: '/:pathMatch(.*)*', redirect: '/chat' },
