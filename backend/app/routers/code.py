@@ -10,7 +10,7 @@
 `CodeService` 里。
 """
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 
@@ -27,6 +27,7 @@ from app.schemas.code import (
     CodeSessionOut,
     CodeSessionPatch,
 )
+from app.schemas.common import ApiResponse
 from app.services.code_service import CodeService
 
 router = APIRouter(prefix="/api/v1/code", tags=["code"])
@@ -34,7 +35,7 @@ router = APIRouter(prefix="/api/v1/code", tags=["code"])
 UserDep = Annotated[User, Depends(get_current_user)]
 
 
-@router.post("/analyze")
+@router.post("/analyze", response_model=ApiResponse[Any])
 async def analyze_code(
     body: CodeAnalyzeIn, session: SessionDep, rid: CurrentRidDep, user: UserDep
 ):
@@ -60,7 +61,7 @@ async def analyze_code(
 
 # ---------------------------------------------------------------- 代码运行（P4）
 
-@router.post("/run")
+@router.post("/run", response_model=ApiResponse[Any])
 async def run_code(
     body: CodeRunIn, session: SessionDep, rid: CurrentRidDep, user: UserDep
 ):
@@ -92,7 +93,7 @@ async def run_code(
     )
 
 
-@router.get("/runs")
+@router.get("/runs", response_model=ApiResponse[Any])
 async def list_runs(
     session: SessionDep,
     rid: CurrentRidDep,
@@ -115,7 +116,7 @@ async def list_runs(
 
 # ---------------------------------------------------------------- 代码会话（P4）
 
-@router.get("/sessions")
+@router.get("/sessions", response_model=ApiResponse[Any])
 async def list_sessions(session: SessionDep, rid: CurrentRidDep, user: UserDep):
     drafts = await CodeService(session).list_drafts(user_id=user.id)
     return ok(
@@ -124,7 +125,7 @@ async def list_sessions(session: SessionDep, rid: CurrentRidDep, user: UserDep):
     )
 
 
-@router.post("/sessions")
+@router.post("/sessions", response_model=ApiResponse[Any])
 async def create_session(
     body: CodeSessionIn, session: SessionDep, rid: CurrentRidDep, user: UserDep
 ):
@@ -138,7 +139,7 @@ async def create_session(
     return ok(CodeSessionOut.model_validate(draft).model_dump(), request_id=rid)
 
 
-@router.patch("/sessions/{draft_id}")
+@router.patch("/sessions/{draft_id}", response_model=ApiResponse[Any])
 async def update_session(
     draft_id: str, body: CodeSessionPatch, session: SessionDep, rid: CurrentRidDep, user: UserDep
 ):
@@ -154,7 +155,7 @@ async def update_session(
     return ok(CodeSessionOut.model_validate(draft).model_dump(), request_id=rid)
 
 
-@router.delete("/sessions/{draft_id}")
+@router.delete("/sessions/{draft_id}", response_model=ApiResponse[Any])
 async def delete_session(
     draft_id: str, session: SessionDep, rid: CurrentRidDep, user: UserDep
 ):

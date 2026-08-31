@@ -5,7 +5,7 @@
 `UserService.delete`（Task 2）。出参不含 `hashed_password`（裁定 4）。
 """
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 
@@ -13,6 +13,7 @@ from app.core.deps import CurrentRidDep, SessionDep, require_admin
 from app.core.responses import ok
 from app.infrastructure.persistence.models import User
 from app.schemas.admin import ROLE_PATTERN, STATUS_PATTERN, UserIn, UserOut, UserPatch
+from app.schemas.common import ApiResponse
 from app.services.user_service import UserService
 
 router = APIRouter(prefix="/api/v1/admin/users", tags=["admin·user"])
@@ -20,7 +21,7 @@ router = APIRouter(prefix="/api/v1/admin/users", tags=["admin·user"])
 AdminDep = Annotated[User, Depends(require_admin)]
 
 
-@router.get("")
+@router.get("", response_model=ApiResponse[Any])
 async def list_users(
     session: SessionDep,
     rid: CurrentRidDep,
@@ -41,7 +42,7 @@ async def list_users(
     )
 
 
-@router.post("")
+@router.post("", response_model=ApiResponse[Any])
 async def create_user(
     body: UserIn, session: SessionDep, rid: CurrentRidDep, user: AdminDep
 ):
@@ -59,7 +60,7 @@ async def create_user(
     return ok(UserOut.model_validate(row).model_dump(), request_id=rid)
 
 
-@router.delete("/{user_id}")
+@router.delete("/{user_id}", response_model=ApiResponse[Any])
 async def delete_user(
     user_id: str, session: SessionDep, rid: CurrentRidDep, user: AdminDep
 ):
@@ -74,7 +75,7 @@ async def delete_user(
     return ok({"deleted": True, **counts}, request_id=rid)
 
 
-@router.patch("/{user_id}")
+@router.patch("/{user_id}", response_model=ApiResponse[Any])
 async def update_user(
     user_id: str,
     body: UserPatch,

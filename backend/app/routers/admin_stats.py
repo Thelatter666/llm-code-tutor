@@ -6,7 +6,7 @@
 """
 
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 
@@ -14,6 +14,7 @@ from app.core.deps import CurrentRidDep, SessionDep, require_admin
 from app.core.errors import ApiError
 from app.core.responses import ok
 from app.infrastructure.persistence.models import AuditLog, User
+from app.schemas.common import ApiResponse
 from app.services.anti_plagiarism_stats import AntiPlagiarismStatsService
 from app.services.audit_service import AuditService
 from app.services.overview_service import OverviewService
@@ -57,7 +58,7 @@ def _log_out(row: AuditLog) -> dict:
     }
 
 
-@router.get("/logs")
+@router.get("/logs", response_model=ApiResponse[Any])
 async def list_logs(
     session: SessionDep,
     rid: CurrentRidDep,
@@ -87,14 +88,14 @@ async def list_logs(
     )
 
 
-@router.get("/overview")
+@router.get("/overview", response_model=ApiResponse[Any])
 async def overview(session: SessionDep, rid: CurrentRidDep, user: AdminDep):
     """仪表盘聚合（裁定 3：最小集，实际响应为超集）。"""
     data = await OverviewService(session).overview()
     return ok(data, request_id=rid)
 
 
-@router.get("/anti-plagiarism/stats")
+@router.get("/anti-plagiarism/stats", response_model=ApiResponse[Any])
 async def anti_plagiarism_stats(
     session: SessionDep, rid: CurrentRidDep, user: AdminDep
 ):

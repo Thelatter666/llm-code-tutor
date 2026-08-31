@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
 
@@ -7,6 +7,7 @@ from app.core.responses import ok
 from app.core.security import create_access_token, decode_token
 from app.infrastructure.persistence.models import User
 from app.schemas.auth import LoginIn, RefreshIn, RegisterIn, UserOut
+from app.schemas.common import ApiResponse
 from app.services.audit_service import AuditService
 from app.services.auth_service import AuthService
 
@@ -19,7 +20,7 @@ def _ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
 
-@router.post("/register")
+@router.post("/register", response_model=ApiResponse[Any])
 async def register(body: RegisterIn, request: Request, session: SessionDep, rid: CurrentRidDep):
     user = await AuthService(session).register(body.username, body.email, body.password)
     await AuditService(session).record(
@@ -34,7 +35,7 @@ async def register(body: RegisterIn, request: Request, session: SessionDep, rid:
     return ok(UserOut.model_validate(user).model_dump(), request_id=rid)
 
 
-@router.post("/login")
+@router.post("/login", response_model=ApiResponse[Any])
 async def login(body: LoginIn, request: Request, session: SessionDep, rid: CurrentRidDep):
     user, access, refresh = await AuthService(session).login(body.username, body.password)
     await AuditService(session).record(
@@ -44,7 +45,7 @@ async def login(body: LoginIn, request: Request, session: SessionDep, rid: Curre
     return ok({"access_token": access, "refresh_token": refresh}, request_id=rid)
 
 
-@router.post("/refresh")
+@router.post("/refresh", response_model=ApiResponse[Any])
 async def refresh(body: RefreshIn, session: SessionDep, rid: CurrentRidDep):
     payload = decode_token(body.refresh_token, expect="refresh")
     user = await AuthService(session).get_by_id(payload["sub"])
@@ -57,12 +58,12 @@ async def refresh(body: RefreshIn, session: SessionDep, rid: CurrentRidDep):
     )
 
 
-@router.get("/me")
+@router.get("/me", response_model=ApiResponse[Any])
 async def me(rid: CurrentRidDep, user: UserDep):
     return ok(UserOut.model_validate(user).model_dump(), request_id=rid)
 
 
-@router.post("/logout")
+@router.post("/logout", response_model=ApiResponse[Any])
 async def logout(
     session: SessionDep, rid: CurrentRidDep, user: UserDep
 ):

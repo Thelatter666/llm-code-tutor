@@ -8,7 +8,7 @@ explanation / test_cases —— 揭示只发生在提交之后（`SubmitOut`）�
 服务端保留 per-call cancel Event 与 4990 语义，与 chat 同构。
 """
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
@@ -17,6 +17,7 @@ from app.core.deps import CurrentRidDep, SessionDep, get_current_user
 from app.core.responses import ok
 from app.infrastructure.persistence.models import User
 from app.infrastructure.sse import format_sse
+from app.schemas.common import ApiResponse
 from app.schemas.exercise import (
     TYPE_PATTERN,
     ExerciseDetail,
@@ -32,7 +33,7 @@ router = APIRouter(prefix="/api/v1/exercises", tags=["exercise"])
 UserDep = Annotated[User, Depends(get_current_user)]
 
 
-@router.get("")
+@router.get("", response_model=ApiResponse[Any])
 async def list_exercises(
     session: SessionDep,
     rid: CurrentRidDep,
@@ -61,7 +62,7 @@ async def list_exercises(
     )
 
 
-@router.get("/{exercise_id}")
+@router.get("/{exercise_id}", response_model=ApiResponse[Any])
 async def get_exercise(
     exercise_id: str, session: SessionDep, rid: CurrentRidDep, user: UserDep
 ):
@@ -72,7 +73,7 @@ async def get_exercise(
     return ok(data, request_id=rid)
 
 
-@router.post("/{exercise_id}/submit")
+@router.post("/{exercise_id}/submit", response_model=ApiResponse[Any])
 async def submit_exercise(
     exercise_id: str,
     body: SubmitIn,
@@ -106,7 +107,10 @@ async def submit_exercise(
     )
 
 
-@router.post("/{exercise_id}/hint")
+@router.post(
+    "/{exercise_id}/hint",
+    responses={200: {"content": {"text/event-stream": {}}, "description": "SSE 事件流（spec §6.1）"}},
+)
 async def stream_hint(
     exercise_id: str,
     body: HintIn,
