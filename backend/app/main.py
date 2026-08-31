@@ -3,11 +3,11 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, FastAPI
+from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.core.deps import CurrentRidDep, require_admin
+from app.core.deps import CurrentRidDep
 from app.core.errors import ApiError, install_exception_handlers
 from app.core.logging import setup_logging
 from app.core.responses import install_request_id, ok
@@ -83,17 +83,6 @@ app.include_router(admin_users.router)
 app.include_router(admin_knowledge.router)
 app.include_router(admin_model_config.router)
 app.include_router(admin_stats.router)
-
-_admin = APIRouter(prefix="/api/v1/admin", tags=["admin"])
-
-
-@_admin.get("/ping")
-async def admin_ping(rid: CurrentRidDep, user=Depends(require_admin)):
-    """P0 占位：用于验证角色拦截。P6 将被真实管理端点取代。"""
-    return ok({"role": user.role}, request_id=rid)
-
-
-app.include_router(_admin)
 
 
 @app.get("/health")

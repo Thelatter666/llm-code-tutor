@@ -108,8 +108,21 @@ async def test_admin_route_blocks_student(client):
     await _register(client, "s4")
     r = await client.post("/api/v1/auth/login", json={"username": "s4", "password": "Secret123!"})
     token = r.json()["data"]["access_token"]
-    r = await client.get("/api/v1/admin/ping", headers={"Authorization": f"Bearer {token}"})
+    # P6 Task 7：/admin/ping 占位已删除（L-1），角色拦截验证改打真实管理端点
+    r = await client.get("/api/v1/admin/users", headers={"Authorization": f"Bearer {token}"})
     assert r.json()["code"] == 4030
+
+
+@pytest.mark.asyncio
+async def test_admin_ping_placeholder_removed(client, db):
+    """L-1（P6 Task 7）：/admin/ping 占位端点已删除，命中 API 404 语义。"""
+    await _register(client, "s4b")
+    r = await client.post(
+        "/api/v1/auth/login", json={"username": "s4b", "password": "Secret123!"}
+    )
+    token = r.json()["data"]["access_token"]
+    r = await client.get("/api/v1/admin/ping", headers={"Authorization": f"Bearer {token}"})
+    assert r.json()["code"] == 4040
 
 
 @pytest.mark.asyncio
