@@ -11,6 +11,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.crypto import encrypt_api_key
 from app.core.errors import ApiError
 from app.infrastructure.adapters.embedding.hashing_embed import HashingEmbed
 from app.infrastructure.adapters.embedding.openai_compat_embed import (
@@ -20,13 +21,15 @@ from app.infrastructure.adapters.embedding.sentence_transformer import (
     DEFAULT_LOCAL_EMBED_MODEL,
 )
 from app.infrastructure.embedder_runtime import EmbedderRuntime
-from app.infrastructure.persistence.models import Chunk, KnowledgeBase
+from app.infrastructure.persistence.models import Chunk, KnowledgeBase, ModelConfig
 from app.infrastructure.registry import (
     EMBEDDING_PROVIDER_HASHING,
     EMBEDDING_PROVIDER_OPENAI,
+    LLM_PROVIDER_OPENAI,
     get_or_create_singleton,
 )
 from app.infrastructure.runtime import get_embedder_runtime, refresh_embedder_config
+from app.services.audit_service import AuditService
 from app.services.rebuild_service import RebuildService
 
 logger = logging.getLogger(__name__)
@@ -76,6 +79,59 @@ class ModelConfigService:
         await self._session.flush()
 
         return {"need_rebuild": bool(kb_ids), "knowledge_base_ids": kb_ids}
+
+    async def update_llm_config(
+        self,
+        *,
+        fields: dict,
+        user_id: str,
+        request_id: str,
+    ) -> ModelConfig:
+        """LLM 配置全量更新（spec §6.2 / §4.2 硬约束 4，P6 Task 3）。
+
+        语义（裁定 2，2026-08-31）：
+        - `api_key` 缺省/None = 不变更；空串已在 schema 层 422；提供即
+          Fernet 加密落 `api_key_encrypted`（spec §8.8）；
+        - 保存时机校验：`provider=openai_compat` 且（本次未提供 key、库中也无 key）
+          → 4220 —— 静默降级会把「配置错误」伪装成「降级运行」；
+        - 保存即 `revision += 1`（ProviderRegistry 缓存失效键），运行时在下一次
+          调用经 `refresh_llm_config` 按 revision 重绑 —— 无需重启（spec §4.2）。
+        """
+        cfg = await get_or_create_singleton(self._session)
+        if not fields:
+            raise ApiError(4220, "PUT 至少需要一个待更新字段")
+
+        provided_key = fields.pop("api_key", None)
+        if provided_key is not None and provided_key.strip():
+            cfg.api_key_encrypted = encrypt_api_key(provided_key)
+
+        new_provider = fields.get("provider", cfg.provider)
+        if new_provider == LLM_PROVIDER_OPENAI and not cfg.api_key_encrypted:
+            raise ApiError(
+                4220,
+                "openai_compat 需要 api_key 才能运行，请先在配置中填写密钥",
+            )
+
+        for key, value in fields.items():
+            setattr(cfg, key, value)
+        # revision 是 ProviderRegistry / LLMRuntime 的缓存失效键（spec §4.2 硬约束 4）
+        cfg.revision += 1
+        cfg.updated_by = user_id
+        await self._session.flush()
+        await AuditService(self._session).record(
+            "admin_model_config_update",
+            user_id=user_id,
+            target_type="model_config",
+            target_id=cfg.id,
+            detail={
+                "fields": sorted(fields),
+                "api_key_updated": provided_key is not None,
+                "provider": cfg.provider,
+                "revision": cfg.revision,
+            },
+            request_id=request_id,
+        )
+        return cfg
 
     async def switch_embedding_with_rebuild(
         self,

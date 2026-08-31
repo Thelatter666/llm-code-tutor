@@ -1,20 +1,83 @@
-"""管理端模型配置：本批次只承载 embedding 切换的 409 流程（spec §8.7）。
+"""管理端模型配置（spec §6.2 / §8.7 / §8.8 / §4.2 硬约束 4，P6 Task 3/4）。
 
-`PUT /admin/model-config` 在 spec §6.2 的 admin 行，本批次只实现其中的
-embedding 部分 —— §8.7 的 409 + 强制重建归 P1，需要一个可调用的入口才能验证。
-其余配置项（LLM provider、防抄袭档位、top_k 等）由 P6 在本文件上补齐。
+- embedding 切换仍走 `/model-config/embedding` 的 409 + 强制重建流程（P1 三道闸），
+  本批不动；
+- 本批补齐 LLM 配置的 GET / PUT / test 三端点：PUT 保存即 `revision += 1`，
+  运行时按下一次调用按 revision 重绑 —— 无需重启（裁定 2 字段面见 schemas/admin.py）。
 """
+
+from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
+from app.core.crypto import decrypt_api_key, mask_api_key
 from app.core.deps import CurrentRidDep, SessionDep, require_admin
 from app.core.responses import ok
 from app.infrastructure.persistence.models import User
+from app.infrastructure.registry import get_or_create_singleton
 from app.infrastructure.runtime import get_embedder_runtime, refresh_embedder_config
+from app.schemas.admin import ModelConfigPut
 from app.schemas.knowledge import EmbeddingConfigIn
 from app.services.model_config_service import ModelConfigService
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
+
+AdminDep = Annotated[User, Depends(require_admin)]
+
+
+def _model_config_out(cfg) -> dict:
+    """LLM 配置出参：api_key 只出掩码（spec §8.8 / CONTEXT.md「API Key 掩码」）。
+
+    明文只存在于加密列与运行时内存；读取接口一律掩码显示。
+    """
+    plain = decrypt_api_key(cfg.api_key_encrypted) if cfg.api_key_encrypted else None
+    return {
+        "provider": cfg.provider,
+        "model": cfg.model,
+        "base_url": cfg.base_url,
+        "api_key": mask_api_key(plain),
+        "temperature": cfg.temperature,
+        "top_p": cfg.top_p,
+        "max_tokens": cfg.max_tokens,
+        "anti_plagiarism_mode": cfg.anti_plagiarism_mode,
+        "score_threshold": cfg.score_threshold,
+        "top_k": cfg.top_k,
+        # embedding 配置只读回显；修改仍走 /model-config/embedding 409 流程
+        "embedding_provider": cfg.embedding_provider,
+        "embedding_model": cfg.embedding_model,
+        "revision": cfg.revision,
+        "updated_by": cfg.updated_by,
+        "updated_at": cfg.updated_at,
+    }
+
+
+@router.get("/model-config")
+async def get_model_config(session: SessionDep, rid: CurrentRidDep, user: AdminDep):
+    """当前 LLM 配置（含掩码 api_key 与 revision，供管理页回显）。"""
+    cfg = await get_or_create_singleton(session)
+    return ok(_model_config_out(cfg), request_id=rid)
+
+
+@router.put("/model-config")
+async def put_model_config(
+    body: ModelConfigPut,
+    session: SessionDep,
+    rid: CurrentRidDep,
+    user: AdminDep,
+):
+    """LLM 配置全量更新（字段面与 api_key 语义见 schemas/admin.py::ModelConfigPut）。
+
+    保存即 `revision += 1`，下一次调用即用新值（spec §4.2 硬约束 4，无需重启）。
+    只改库不够 —— 服务侧在**下一次请求**经 `refresh_llm_config` 按 revision 重绑，
+    本端点不主动刷新（避免与在途请求抢运行时）。
+    """
+    cfg = await ModelConfigService(session).update_llm_config(
+        fields=body.model_dump(exclude_unset=True),
+        user_id=user.id,
+        request_id=rid,
+    )
+    await session.commit()
+    return ok(_model_config_out(cfg), request_id=rid)
 
 
 @router.put("/model-config/embedding")
