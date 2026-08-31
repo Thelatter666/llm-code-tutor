@@ -50,7 +50,7 @@ export const listRuns = (page = 1, pageSize = 10) =>
     params: { page, page_size: pageSize },
   })
 
-// ---------------------------------------------------------------- 草稿（CodeSession）
+// ---------------------------------------------------------------- 代码会话（CodeSession）
 
 export const listSessions = () => api.get<ApiResponse<{ items: CodeSessionOut[] }>>('/code/sessions')
 

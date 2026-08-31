@@ -3,7 +3,7 @@
 - `POST /code/analyze`：静态解析 + AI 讲解，固定 `review_my_code` 意图
   （ADR-0005：豁免是显式契约，端点就是那个显式入口）
 - `POST /code/run`：受限执行（P4，spec §8.3）
-- `/code/sessions`：编辑器草稿 CRUD（P4）
+- `/code/sessions`：编辑器代码会话 CRUD（P4）
 - `GET /code/runs`：运行历史（P4）
 
 **路由不含业务逻辑**，只做参数校验与序列化；并发上限、落库、审计都在
@@ -113,7 +113,7 @@ async def list_runs(
     )
 
 
-# ---------------------------------------------------------------- 草稿（P4）
+# ---------------------------------------------------------------- 代码会话（P4）
 
 @router.get("/sessions")
 async def list_sessions(session: SessionDep, rid: CurrentRidDep, user: UserDep):
@@ -142,7 +142,7 @@ async def create_session(
 async def update_session(
     draft_id: str, body: CodeSessionPatch, session: SessionDep, rid: CurrentRidDep, user: UserDep
 ):
-    """越权（草稿属于别人或不存在）一律 `4040` —— 不泄露「存在但不属于你」。"""
+    """越权（代码会话属于别人或不存在）一律 `4040` —— 不泄露「存在但不属于你」。"""
     draft = await CodeService(session).update_draft(
         user_id=user.id,
         draft_id=draft_id,
@@ -158,8 +158,8 @@ async def update_session(
 async def delete_session(
     draft_id: str, session: SessionDep, rid: CurrentRidDep, user: UserDep
 ):
-    """删草稿**不删**运行历史 —— `CodeRun` 与 `CodeSession` 之间没有外键，
-    一次运行的留痕不该因为草稿被删而消失。"""
+    """删代码会话**不删**运行历史 —— `CodeRun` 与 `CodeSession` 之间没有外键，
+    一次运行的留痕不该因为会话被删而消失。"""
     await CodeService(session).delete_draft(user_id=user.id, draft_id=draft_id)
     await session.commit()
     return ok({"id": draft_id}, request_id=rid)

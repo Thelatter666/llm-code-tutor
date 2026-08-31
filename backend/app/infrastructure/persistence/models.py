@@ -207,10 +207,10 @@ class CodeAnalysis(Base):
 
 
 class CodeSession(Base):
-    """代码会话：在线编辑器中的一份代码草稿（CONTEXT.md）。
+    """代码会话：在线编辑器中的一份代码会话（CONTEXT.md）。
 
-    不使用「代码片段」「草稿」称之。与 CodeRun 的关系是「草稿 → 多次运行」，
-    但 spec §5 未要求外键，运行记录独立留存 —— 删草稿不该连带删掉运行历史。
+    不使用「代码片段」「草稿」称之。与 CodeRun 的关系是「会话 → 多次运行」，
+    但 spec §5 未要求外键，运行记录独立留存 —— 删会话不该连带删掉运行历史。
     """
 
     __tablename__ = "code_sessions"
@@ -219,7 +219,7 @@ class CodeSession(Base):
     user_id: Mapped[str] = mapped_column(String, index=True)
     language: Mapped[str] = mapped_column(String)
     source_code: Mapped[str] = mapped_column(Text, default="")
-    title: Mapped[str] = mapped_column(String, default="未命名草稿")
+    title: Mapped[str] = mapped_column(String, default="未命名会话")
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_now)
     # 编辑器每次保存都推进它，供列表按最近编辑排序
     updated_at: Mapped[datetime] = mapped_column(

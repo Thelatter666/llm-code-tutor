@@ -79,7 +79,7 @@ watch(
   },
 )
 
-// 外部改了源码（例如加载草稿）时同步进编辑器，且不能触发回声式 update
+// 外部改了源码（例如加载代码会话）时同步进编辑器，且不能触发回声式 update
 watch(
   () => props.modelValue,
   (value) => {
@@ -98,7 +98,7 @@ onBeforeUnmount(() => {
 })
 
 defineExpose({
-  /** 供父组件把光标内容取回（保存草稿前用一次）。 */
+  /** 供父组件把光标内容取回（保存会话前用一次）。 */
   getValue: () => editor?.getValue() ?? props.modelValue,
 })
 </script>

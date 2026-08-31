@@ -14,7 +14,7 @@ import { computed, onMounted, ref } from 'vue'
 /**
  * 在线代码编辑器页（spec §6.2 code 行 / §8.3）。
  *
- * 术语：代码会话 CodeSession（草稿）、代码运行 CodeRun（一次执行记录）。
+ * 术语：代码会话 CodeSession、代码运行 CodeRun（一次执行记录）。
  *
  * **安全边界必须显式声明**（ADR-0003）：黑名单只防误触不防攻击，被执行代码
  * 以当前 OS 用户身份运行、对本机文件系统有读权限。这行提示不是免责套话 ——
@@ -130,7 +130,7 @@ async function saveDraft() {
 }
 
 function defaultTitle() {
-  const firstLine = source.value.split('\n').find((l) => l.trim()) ?? '未命名草稿'
+  const firstLine = source.value.split('\n').find((l) => l.trim()) ?? '未命名会话'
   return firstLine.slice(0, 40)
 }
 
@@ -188,7 +188,7 @@ onMounted(async () => {
         </el-radio-group>
         <div class="lab__bar-actions">
           <el-button link :icon="Files" @click="loadSample">填入示例</el-button>
-          <el-button link :icon="Files" @click="saveDraft">保存草稿</el-button>
+          <el-button link :icon="Files" @click="saveDraft">保存会话</el-button>
           <el-button
             type="primary"
             :icon="VideoPlay"
@@ -269,7 +269,7 @@ onMounted(async () => {
 
       <div class="card">
         <h3 class="card__title">
-          草稿
+          会话
           <el-button link class="card__action" @click="newDraft">新建</el-button>
         </h3>
         <ul v-if="drafts.length" class="list">
@@ -281,7 +281,7 @@ onMounted(async () => {
             <el-button link :icon="Delete" class="list__del" @click="removeDraft(d)" />
           </li>
         </ul>
-        <p v-else class="card__note">还没有草稿，写点代码后点「保存草稿」。</p>
+        <p v-else class="card__note">还没有会话，写点代码后点「保存会话」。</p>
       </div>
 
       <div class="card">

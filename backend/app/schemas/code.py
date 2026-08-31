@@ -57,7 +57,7 @@ class CodeRunOut(BaseModel):
 
 class CodeSessionIn(BaseModel):
     language: str = Field(pattern=f"^({'|'.join(RUN_LANGUAGES)})$")
-    title: str = Field(default="未命名草稿", max_length=100)
+    title: str = Field(default="未命名会话", max_length=100)
     source_code: str = Field(default="", max_length=SOURCE_MAX)
 
 

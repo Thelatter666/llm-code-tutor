@@ -16,7 +16,6 @@ class Settings(BaseSettings):
     access_token_ttl_minutes: int = 30
     refresh_token_ttl_days: int = 7
     app_secret_path: str = ".secret_key"
-    llm_provider: str = "mock"
     # Chroma 本地持久化目录（相对路径以 backend/ 为基准）
     chroma_persist_dir: str = "data/chroma"
     # 上传文件落盘目录（相对路径以 backend/ 为基准）
