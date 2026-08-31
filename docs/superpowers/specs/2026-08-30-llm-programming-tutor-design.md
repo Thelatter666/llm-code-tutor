@@ -323,6 +323,55 @@ fallback_reason}`（九字段）。`degraded` 取检索与提供方的或、`fal
 | admin | `GET /admin/logs?action=&user_id=&start=&end=` `GET /admin/overview` `GET /admin/anti-plagiarism/stats` | overview 为仪表盘聚合；stats 返回各档位拦截率 |
 | system | `GET /health` | |
 
+**admin 端点补记（P6，管理后台收口）**：
+
+- **`GET /admin/users` 出参 UserOut（裁定 4）**：`id, username, email, role, status,
+  created_at, last_login_at` —— 含 email（管理员互见），`hashed_password` 永不出参。
+  分页 `{items, total}` 按创建时间倒序；`q` 对 username/email 模糊匹配，`role`/`status`
+  精确匹配（非法取值 422）。
+- **`POST /admin/users`**：`{username, email, password, role?, status?}`（role 默认
+  student、status 默认 active）；密码口径与注册一致（8–128 位，bcrypt 落库）；
+  username/email 重复 → 4090。审计 `admin_user_create`。
+- **`PATCH /admin/users/{id}`**：全字段可选、`extra=forbid`（schema 外字段 422 显式
+  拒绝）；`status:"disabled"` 即**软删除**（日常路径，保留全部数据，登录与旧 token
+  立即 4030）；传 password 即管理员重置密码。审计 `admin_user_update`。
+  **自操作禁令（裁定 1）**：对自己的 role/status 变更一律 4220（自降权/自停用与自删
+  同样锁死系统）；email/password 自改允许。
+- **`DELETE /admin/users/{id}` 硬删除 + 级联（裁定 5：单事务同步）**：按序删
+  会话 → 消息 → 提交 → 错题条目 → 代码会话 → 代码分析 → 代码运行，再删 User 行；
+  `AuditLog` 一律保留（§8.9）。审计 `admin_user_delete`，detail 带全部级联计数。
+  **末位 active admin 约束（裁定 1）**：删/停/降权其他 admin 后须剩余 ≥1 名
+  `role=admin 且 status=active`，否则 4220；自删 4220。
+  **KB.owner_id 悬空例外（裁定 9）**：硬删除**不级联知识库**（§8.9 七类清单之外），
+  知识库功能对 owner 缺失必须容忍（不得 5000 或消失）。
+- **`GET /admin/model-config`**：全字段回显；`api_key` 走掩码 `sk-****abcd`
+  （§8.8；≤7 位短密钥整体 `****`，不泄露片段）。含 `revision / updated_by / updated_at`。
+- **`PUT /admin/model-config`（裁定 2）**：字段面
+  `{provider(mock|openai_compat), model, base_url?, api_key?, temperature?, top_p?,
+  max_tokens?, anti_plagiarism_mode(strict|guided|loose), score_threshold?, top_k?}`，
+  `extra=forbid`。**api_key 缺省/null = 不变更**（掩码回显下前端常态回传 null，
+  绝不能清掉已有密钥）；空串 4220；`provider=openai_compat` 且（本次未提供且库中无）
+  key → 4220 拒绝保存（静默降级会把「配置错误」伪装成「降级运行」）。
+  保存即 `revision += 1`、`updated_by=管理员`（§4.2 硬约束 4 热生效，无需重启）；
+  审计 `admin_model_config_update`。**embedding 两字段不入本 PUT** —— 仍走
+  `/admin/model-config/embedding` 的 409 重建流程（§8.7）。`mock_token_delay_ms`
+  保持 env 配置（`Settings`），不提供写入入口。
+- **`POST /admin/model-config/test`（裁定 2 附项）**：**只测已保存配置**，不接受覆盖
+  参数；返回 `{ok, latency_ms, sample}`。只测首选级提供方（不经降级链 —— 否则坏配置
+  被 Mock 伪装成 ok=true）；失败返回 `ok:false` 且不抛 5xx（配置测试的失败是业务结果）。
+- **`GET /admin/logs`（裁定 8 文案）**：`action` / `user_id` 精确匹配（两列有索引）、
+  `start` / `end` 为 ISO 日期或日期时间（纯日期按当日闭合区间，无时区输入按 UTC，
+  非法 422），按 `created_at` 倒序分页 `{items, total}`。出参为审计行全字段回显
+  （含 detail JSON / ip / request_id）。页面说明：审计日志仅可查询、不可修改或删除。
+- **`GET /admin/overview`（裁定 3）**：**最小集，实际响应为超集** ——
+  `users{total,active,admin}`、conversations、messages、knowledge_bases、documents、
+  code_sessions、code_analyses、code_runs、`exercises{published,draft}`、submissions、
+  `mistake_entries{total,unmastered}`、audit_logs、`model_config{provider,model,
+  anti_plagiarism_mode,revision}`、`embedder`（与 /health 同源快照）。
+- **`GET /admin/anti-plagiarism/stats` 口径（P2 偏离 4）**：只数 `role=user` 的请求；
+  页面文案必须写明「拦截率是度量口径，不是抄袭检出能力」。
+- **`/admin/ping` 占位端点已移除**（P6）：spec §6.2 从未收录，OpenAPI 已同步消失。
+
 **exercise / mistake / admin·exercise 端点补记（P5）**：
 
 - **学生端只暴露 `status=published`**：列表与详情对 draft 与不存在一律 `4040`
@@ -625,6 +674,17 @@ fallback_reason}`（九字段）。`degraded` 取检索与提供方的或、`fal
 `DELETE /admin/users/{id}` 为**硬删除 + 级联清理**，按序删除：会话 → 消息 → 提交 → 错题条目 → 代码会话 → 代码分析 → 代码运行。
 
 **`AuditLog` 一律保留，不随用户删除** —— 审计记录的可追溯性优先于数据清理。硬删除操作本身写入 `AuditLog(action=admin_user_delete)`，即使执行者自身后续被删除，该记录仍然存在。
+
+**P6 实记（2026-08-31）**：
+- 级联为**单事务同步**执行（裁定 5），`admin_user_delete` 审计的 `detail` 带全部七类
+  级联计数（conversations / messages / submissions / mistake_entries / code_sessions /
+  code_analyses / code_runs），硬删除不可回滚，计数是唯一事后依据。
+- **管理员自删禁令与末位 active admin 约束（裁定 1）**：自删、自降权、自停用一律 4220；
+  删/停/降权其他 admin 后须剩余 ≥1 名 `role=admin 且 status=active`，否则 4220。
+- **KB.owner_id 悬空例外（裁定 9）**：硬删除**不级联知识库** —— 知识库归属者被删除后，
+  其 `owner_id` 悬空但知识库照常可读可管理（不得 5000 或消失）；该例外与 AuditLog 保留
+  并列写入 `UserService.delete` docstring，防止后续新增表时漏更级联清单。
+- 七类级联清单 + 两项不级联例外（AuditLog / KB.owner_id）在实现 docstring 逐项列出。
 
 ---
 

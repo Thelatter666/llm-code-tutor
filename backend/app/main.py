@@ -3,11 +3,11 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, FastAPI
+from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.core.deps import CurrentRidDep, require_admin
+from app.core.deps import CurrentRidDep
 from app.core.errors import ApiError, install_exception_handlers
 from app.core.logging import setup_logging
 from app.core.responses import install_request_id, ok
@@ -17,7 +17,7 @@ from app.infrastructure.runtime import (
     refresh_embedder_config,
     refresh_llm_config,
 )
-from app.routers import admin_exercise, admin_knowledge, admin_model_config, admin_stats, chat, code, exercise, knowledge
+from app.routers import admin_exercise, admin_knowledge, admin_model_config, admin_stats, admin_users, chat, code, exercise, knowledge
 from app.routers import auth as auth_router
 from app.routers import mistake
 from app.services.model_config_service import ModelConfigService
@@ -79,20 +79,10 @@ app.include_router(code.router)
 app.include_router(exercise.router)
 app.include_router(mistake.router)
 app.include_router(admin_exercise.router)
+app.include_router(admin_users.router)
 app.include_router(admin_knowledge.router)
 app.include_router(admin_model_config.router)
 app.include_router(admin_stats.router)
-
-_admin = APIRouter(prefix="/api/v1/admin", tags=["admin"])
-
-
-@_admin.get("/ping")
-async def admin_ping(rid: CurrentRidDep, user=Depends(require_admin)):
-    """P0 占位：用于验证角色拦截。P6 将被真实管理端点取代。"""
-    return ok({"role": user.role}, request_id=rid)
-
-
-app.include_router(_admin)
 
 
 @app.get("/health")

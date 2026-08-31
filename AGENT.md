@@ -54,6 +54,7 @@
 | 2026-08-31 | P3 代码解析与辅导（分支 `feat/p3-code-review`，含并入的 Mock 流式延迟、前端 Markdown 渲染、spec §8.1 歧义改写） | 用户预先授权：每个 Task 完成且全量测试通过后，可直接按 Task 粒度 `git commit`，无需逐次请示。**`merge` 不在本次授权内**，仍需单独下令。 |
 | 2026-08-31 | P4 在线编辑器与受限执行器（分支 `feat/p4-editor-sandbox`） | 用户预先授权：每个 Task 完成且全量测试通过后，可直接按 Task 粒度 `git commit`，无需逐次请示。**`merge` 不在本次授权内**，仍需单独下令。 |
 | 2026-08-31 | P5 习题与错题本（分支 `feat/p5-exercise-mistakebook`） | 用户预先授权：每个 Task 完成且全量测试通过后，可直接按 Task 粒度 `git commit`，无需逐次请示。**`merge` 不在本次授权内**，仍需单独下令。 |
+| 2026-08-31 | P6 管理后台收口（分支 `feat/p6-admin-console`） | 用户预先授权：每个 Task 完成且全量测试通过后，可直接按 Task 粒度 `git commit`，无需逐次请示。**`merge` 不在本次授权内**，仍需单独下令。 |
 
 ## 产出物落盘约定
 
