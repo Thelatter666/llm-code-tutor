@@ -17,6 +17,14 @@ def test_mask_api_key():
     assert mask_api_key(None) == ""
 
 
+def test_mask_api_key_short_key_leaks_nothing():
+    """L-2：≤7 位时「前 3 + 后 4」会重叠或全量暴露，短密钥不透露任何片段。"""
+    assert mask_api_key("abcdef") == "****"
+    assert mask_api_key("abcdefg") == "****"
+    # 8 位起前 3 与后 4 不再重叠，恢复标准掩码形态
+    assert mask_api_key("abcdefgh") == "abc****efgh"
+
+
 @pytest.mark.asyncio
 async def test_get_or_create_singleton_is_idempotent(session):
     """H2：单例必须唯一，否则第二行变孤儿、registry 可能取到旧行。"""

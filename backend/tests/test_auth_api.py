@@ -165,3 +165,25 @@ async def test_password_is_not_stored_in_plaintext(client, db):
     u = (await db.execute(select(User).where(User.username == "s9"))).scalar_one()
     assert u.hashed_password != "Secret123!"
     assert u.hashed_password.startswith("$2b$")
+
+
+@pytest.mark.asyncio
+async def test_valid_token_with_deleted_user_rejected_with_4010(client, db):
+    """M-8/M11 收口：token 本身有效但用户已被硬删除 → 4010（不是 4030/404）。
+
+    deps.py 的「用户不存在」分支此前零覆盖；停用 → 4030 已由上一条用例覆盖，
+    两者走的是 deps.py 里不同的分支，缺一不可。
+    """
+    await _register(client, "s10")
+    token = (
+        await client.post(
+            "/api/v1/auth/login", json={"username": "s10", "password": "Secret123!"}
+        )
+    ).json()["data"]["access_token"]
+
+    u = (await db.execute(select(User).where(User.username == "s10"))).scalar_one()
+    await db.delete(u)
+    await db.commit()
+
+    r = await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert r.json()["code"] == 4010

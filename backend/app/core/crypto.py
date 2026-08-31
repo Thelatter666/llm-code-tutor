@@ -29,4 +29,8 @@ def decrypt_api_key(cipher: str) -> str:
 def mask_api_key(plain: str | None) -> str:
     if not plain:
         return ""
+    if len(plain) < 8:
+        # L-2：≤7 位时「前 3 + 后 4」会重叠或全量暴露（如 6 位 key → 全文泄露），
+        # 短密钥不透露任何片段
+        return "****"
     return f"{plain[:3]}****{plain[-4:]}"
