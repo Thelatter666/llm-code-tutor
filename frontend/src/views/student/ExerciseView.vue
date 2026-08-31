@@ -19,6 +19,7 @@ import { TYPE_LABELS } from '@/types/exercise'
 import { MagicStick, Promotion, VideoPause } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 
 /**
  * 习题练习页（spec §5.1 判题四路 / §6.2 exercise 行 / §7.1 双意图辅导）。
@@ -32,6 +33,12 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
  */
 
 const PAGE_SIZE = 20
+
+/**
+ * 支持错题本深链：`/exercises?focus=<exercise_id>` 直接打开指定习题
+ * （推荐清单与错题条目里的「去做这道习题」走的就是它）。
+ */
+const route = useRoute()
 
 const items = ref<ExerciseListItem[]>([])
 const total = ref(0)
@@ -58,7 +65,7 @@ let hintAbort: AbortController | null = null
 
 // ---------------------------------------------------------------- 列表
 
-async function loadList() {
+async function loadList(autoSelect = true) {
   const { data } = await exerciseApi.listExercises({
     type: filterType.value as never,
     difficulty: filterDifficulty.value,
@@ -71,7 +78,7 @@ async function loadList() {
   items.value = out.items
   total.value = out.total
   facets.value = out.facets.knowledge_tags
-  if (!detail.value && out.items.length) await selectExercise(out.items[0].id)
+  if (autoSelect && !detail.value && out.items.length) await selectExercise(out.items[0].id)
 }
 
 async function selectExercise(id: string) {
@@ -87,7 +94,11 @@ watch([filterType, filterDifficulty, filterTag], () => {
   void loadList()
 })
 
-onMounted(loadList)
+onMounted(async () => {
+  const focus = typeof route.query.focus === 'string' ? route.query.focus : ''
+  await loadList(!focus)
+  if (focus) await selectExercise(focus)
+})
 
 const optionKeys = computed(() => Object.keys(detail.value?.options ?? {}).sort())
 

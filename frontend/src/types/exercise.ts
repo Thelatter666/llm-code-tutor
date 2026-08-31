@@ -114,33 +114,3 @@ export interface HintErrorEvent {
   code: number
   message: string
 }
-
-// ---------------------------------------------------------------- 错题本
-
-export interface MistakeEntryOut {
-  id: string
-  exercise_id: string
-  wrong_count: number
-  consecutive_correct: number
-  last_wrong_answer: AnswerValue
-  last_wrong_at: string | null
-  mastered: boolean
-  mastered_at: string | null
-  exercise: ExerciseListItem
-}
-
-export interface WeakKnowledgePointOut {
-  knowledge_tag: string
-  wrong_count: number
-}
-
-export interface RecommendationItemOut {
-  exercise: ExerciseListItem
-  /** profile=薄弱画像推荐；random=随机补足（标注必须可见，CONTEXT.md RandomFill） */
-  filled_by: 'profile' | 'random'
-}
-
-export interface RecommendationsOut {
-  items: RecommendationItemOut[]
-  weak_tags: string[]
-}

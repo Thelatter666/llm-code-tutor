@@ -36,6 +36,11 @@ const router = createRouter({
           component: () => import('@/views/student/ExerciseView.vue'),
         },
         {
+          // 错题本：掌握状态、薄弱画像与定向推荐（spec §8.5）
+          path: 'mistakes',
+          component: () => import('@/views/student/MistakeBookView.vue'),
+        },
+        {
           path: 'admin/knowledge',
           component: () => import('@/views/admin/KnowledgeAdminView.vue'),
           meta: { requiresAdmin: true },
