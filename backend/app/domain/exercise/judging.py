@@ -49,6 +49,10 @@ SCORE_ZERO = 0
 METHOD_DIRECT = "direct"
 METHOD_EXECUTED = "executed"
 
+# 编程题单题全部用例的**累计**耗时上限（spec §5.1，已裁定由服务层自计：
+# CodeExecutor 端口无 per-call 超时参数，跨用例累计耗时超预算即中止剩余用例）
+JUDGING_BUDGET_S = 15.0
+
 
 @dataclass(frozen=True)
 class JudgeOutcome:
