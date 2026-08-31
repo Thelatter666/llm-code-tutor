@@ -564,6 +564,31 @@ async def test_hard_delete_self_rejected_4220(client, factory):
 
 
 @pytest.mark.asyncio
+async def test_hard_delete_self_rejected_even_with_other_admin(client, factory):
+    """裁定 1 补充（总指挥变异 S1 揭示）：存在其他 active admin 时自删仍须 4220。
+
+    原 `test_hard_delete_self_rejected_4220` 只有单 admin —— 自删请求先被
+    末位守卫拦截（同为 4220），自删分支被掩盖；拆掉自删守卫后该用例仍绿。
+    本用例构造第二 active admin 使末位守卫不触发，独立守住「不能删除自己」。
+    """
+    token = await _admin_token(client, factory)
+    me = (await client.get("/api/v1/auth/me", headers=_auth(token))).json()["data"]
+    r = await client.post(
+        "/api/v1/admin/users",
+        headers=_auth(token),
+        json={
+            "username": "secondroot",
+            "email": "secondroot@x.com",
+            "password": PASSWORD,
+            "role": ADMIN,
+        },
+    )
+    assert r.json()["code"] == 0, r.text
+    r = await client.delete(f"/api/v1/admin/users/{me['id']}", headers=_auth(token))
+    assert r.json()["code"] == 4220
+
+
+@pytest.mark.asyncio
 async def test_hard_delete_last_admin_guard(session):
     """裁定 1：删其他 admin 后须剩余 ≥1 名 active admin（服务层不变量兜底）。"""
     from app.services.user_service import UserService
