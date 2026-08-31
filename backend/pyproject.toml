@@ -34,10 +34,12 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [tool.setuptools]
-packages = ["app"]
+# seeds 是顶层包（spec §4.3：backend/seeds/ = 习题种子 + 初始 admin，遗留 M2）
+packages = ["app", "seeds"]
 
 [tool.setuptools.package-dir]
 app = "app"
+seeds = "seeds"
 
 [build-system]
 requires = ["setuptools>=75"]

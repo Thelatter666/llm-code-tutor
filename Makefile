@@ -39,4 +39,4 @@ seed:
 	cd $(BACKEND) && $(PY) python -m app.seed
 
 lint:
-	cd $(BACKEND) && $(PY) ruff check app tests
+	cd $(BACKEND) && $(PY) ruff check app seeds tests
