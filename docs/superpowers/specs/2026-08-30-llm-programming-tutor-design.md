@@ -133,6 +133,18 @@
 | `CodeExecutor` | 受控执行学生代码 | SubprocessSandbox |
 | `CodeParser` | 静态分析 | AstParser |
 
+**清理批次补记（2026-09-01）**：
+
+- **`CodeParser` 行是已裁定的有意偏离**：实现无 `ports/code_parser.py`，静态解析
+  落领域层 `domain/code/analysis.py`（P3 裁定：纯领域实现、零 IO、可脱离数据库单测；
+  `ast` 是标准库，领域层引用不违反「领域禁 import 基础设施」，且没有第二种解析
+  实现需要抽象 —— 若将来需要第三种解析器再提炼端口，届时纯重构）。本表保留该行
+  以忠实反映 §4.1 的原始端口愿景，读者以本补记为准。
+- `DocumentParser` 端口的服务层接缝签名为 `parse(path, source_type)`：按来源类型
+  派发是「源文件 → 纯文本」语义的组成部分，逐格式类（PdfPlumber / PythonDocx /
+  TextReader）只是适配器内部的派发细节。索引服务经 `runtime.get_document_parser()`
+  注入本端口，不再直连适配器（H-3 收口）。
+
 ### 4.2 四条硬约束
 
 1. **领域层零 IO** —— `domain/` 不 import 任何基础设施模块，业务规则可脱离数据库单测。
