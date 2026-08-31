@@ -17,17 +17,19 @@ from fastapi import APIRouter, Depends, Query
 
 from app.core.deps import CurrentRidDep, SessionDep, require_admin
 from app.core.responses import ok
-from app.domain.exercise.judging import EXERCISE_STATUSES, EXERCISE_TYPES
 from app.infrastructure.persistence.models import User
-from app.schemas.exercise import ExerciseIn, ExerciseOut, ExercisePatch
+from app.schemas.exercise import (
+    STATUS_PATTERN,
+    TYPE_PATTERN,
+    ExerciseIn,
+    ExerciseOut,
+    ExercisePatch,
+)
 from app.services.exercise_service import ExerciseService
 
 router = APIRouter(prefix="/api/v1/admin/exercises", tags=["admin·exercise"])
 
 AdminDep = Annotated[User, Depends(require_admin)]
-
-_TYPE_PATTERN = f"^({'|'.join(EXERCISE_TYPES)})$"
-_STATUS_PATTERN = f"^({'|'.join(EXERCISE_STATUSES)})$"
 
 
 @router.post("")
@@ -56,10 +58,10 @@ async def list_exercises(
     session: SessionDep,
     rid: CurrentRidDep,
     user: AdminDep,
-    type: Annotated[str | None, Query(pattern=_TYPE_PATTERN)] = None,
+    type: Annotated[str | None, Query(pattern=TYPE_PATTERN)] = None,
     difficulty: Annotated[int | None, Query(ge=1, le=5)] = None,
     knowledge_tag: str | None = None,
-    status: Annotated[str | None, Query(pattern=_STATUS_PATTERN)] = None,
+    status: Annotated[str | None, Query(pattern=STATUS_PATTERN)] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
 ):

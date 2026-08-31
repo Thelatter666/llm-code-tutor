@@ -67,7 +67,7 @@ EXERCISES: list[dict] = [
             "D": "class",
         },
         "answer": "C",
-        "explanation": "变量名只能由字母、数字、下划线组成，且不能以数字开头，也不能是关键字。_score 以下划线开头是合法的；class 是保留关键字，my-name 含减号会被解析成减法。",
+        "explanation": "变量名由字母（含中文等 Unicode 字母）、数字、下划线组成，且不能以数字开头，也不能是关键字。_score 以下划线开头是合法的；class 是保留关键字，my-name 含减号会被解析成减法表达式。",
     },
     {
         "slug": "py-choice-03",
@@ -240,7 +240,7 @@ EXERCISES: list[dict] = [
     {
         "slug": "py-multi-02",
         "type": "multi",
-        "difficulty": 2,
+        "difficulty": 3,
         "knowledge_tags": ["运算符"],
         "stem": "下列哪些表达式的计算结果是正确的？",
         "options": {
@@ -335,7 +335,7 @@ EXERCISES: list[dict] = [
         "type": "blank",
         "difficulty": 1,
         "knowledge_tags": ["数据类型"],
-        "stem": "在 Python 中，用于查看一个值所属数据类型的内置函数名是 ____，例如 type(3.5) 会返回 <class 'float'>。",
+        "stem": "在 Python 中，用于查看一个值所属数据类型的内置函数名是 ____，例如对 3.5 调用它会返回 <class 'float'>。",
         "answer": "type",
         "explanation": "type() 是 Python 内置的类型查看函数，传入任意对象返回其类型。易错点是写成其他语言的 typeof，Python 中不存在该函数。",
     },
@@ -378,7 +378,7 @@ EXERCISES: list[dict] = [
     {
         "slug": "py-blank-06",
         "type": "blank",
-        "difficulty": 3,
+        "difficulty": 2,
         "knowledge_tags": ["推导式"],
         "stem": "在 Python 3 中，执行 print(len([x for x in range(10) if x % 2 == 0])) 输出的结果是 ____。",
         "answer": "5",

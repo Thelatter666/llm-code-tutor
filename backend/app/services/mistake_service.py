@@ -199,11 +199,28 @@ class MistakeBookService:
 
     # ------------------------------------------------------------ 内部辅助
 
+    async def published_exercise(self, exercise_id: str) -> Exercise | None:
+        """取该条目对应的**学生可见**习题；已下架（draft）或已删除返回 None。
+
+        错题本的任何出口都不该把未发布习题的题干与选项递给学生 —— 学生端列表与
+        详情对 draft 一律 `4040`（spec §6.2），错题本同理。路由侧只用它判空，
+        不自己查 ORM。
+        """
+        row = await self._session.get(Exercise, exercise_id)
+        if row is None or row.status != STATUS_PUBLISHED:
+            return None
+        return row
+
     async def _exercises_of(self, entries: list[MistakeBookEntry]) -> dict[str, Exercise]:
+        """条目对应的习题摘要，**只收 published**（无主与已下架的条目一并丢弃）。"""
         ids = {entry.exercise_id for entry in entries}
         if not ids:
             return {}
         rows = (
-            await self._session.execute(select(Exercise).where(Exercise.id.in_(ids)))
+            await self._session.execute(
+                select(Exercise).where(
+                    Exercise.id.in_(ids), Exercise.status == STATUS_PUBLISHED
+                )
+            )
         ).scalars().all()
         return {row.id: row for row in rows}

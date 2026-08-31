@@ -70,7 +70,7 @@
 11. **强制单 worker 换取存储层正确性** —— 牺牲多核利用率，换取 SQLite 与 Chroma 不出现并发写损坏。
 12. **HashingEmbed 定位为哨兵而非可用降级** —— 宁可少一个功能，不要一个错的功能（见 §7.3）。
 13. **删除知识库时 Chroma 删除失败仍继续删 DB** —— 牺牲向量层一致性，换取记录不残留为无法清理的死数据，并落 AuditLog 告警。
-14. **单 worker + 阻塞调用卸载到线程池** —— 单事件循环下，代码执行（最长 5s）、判题（累计最长 15s）、知识库索引、embedding 推理若同步执行会冻结整个后端。统一走 `run_in_threadpool`，并以信号量限制并发（代码执行 2、索引 1）。代价是引入线程池并发管理，收益是彻底消除冻结。
+14. **单 worker + 阻塞调用卸载到线程池** —— 单事件循环下，代码执行（最长 5s）、判题（累计最长 15s）、知识库索引、embedding 推理若同步执行会冻结整个后端。统一走 `run_in_threadpool`，并以信号量限制并发（代码执行 2、索引 1）。代价是引入线程池并发管理，收益是彻底消除冻结。**（P5 补记）** 编程题判题的**每个用例**都过与 `/code/run` 同一个执行信号量 —— 判题就是代码执行，不该绕过配额；获取超时 `4290` 照常向上传播，该次提交**不落库**（宁可让学生重试，不要留下一条判分不明的提交）。
 15. **豁免采用显式入口契约而非语义推断** —— 推断错了泄露的是完整答案，代价不对称。聊天入口一律 `seek_answer`，豁免仅在代码辅导页 / 编辑器页 / 习题页「批改我的作答」按钮等显式入口生效。
 16. **检索不持锁、写操作持锁** —— per-`kb_id` 的 `asyncio.Lock` 仅保护索引 / 删除 / 重建 / GC；检索允许读到中间态。让最常演示的检索路径排队得不偿失。
 17. **本地 embedding 依赖默认安装** —— 牺牲约 1GB 体积与数分钟安装时间，换取无 API Key 时 RAG 仍有真实语义。若默认不装，无 key 演示将退化为 HashingEmbed 哨兵（检索结果不注入 prompt），知识库功能实际不可用。
@@ -172,6 +172,15 @@ llm-code-tutor/
     └── src/{api,router,stores,views/{student,admin},components,types}
 ```
 
+**P5 补记**：`backend/seeds/` 已落地为顶层包（遗留 M2 收口）。`seeds.seed()` 按
+**admin → ModelConfig → exercises** 编排，三步全部幂等 —— 已存在即跳过，不覆盖既有
+数据（管理员改过的密码与题干必须活过第二次 `make seed`）。`app/seed.py` 保留
+`python -m app.seed` CLI 入口并**再导出** `seed` / `DEFAULT_ADMIN_USERNAME`，是薄壳而非
+第二份实现（两份会各自漂移）。习题主键按
+`uuid5(NAMESPACE_URL, "llm-code-tutor:exercise:<slug>")` 确定性派生 —— Exercise 没有
+自然键（题干会被改、题型不是标识），幂等判定落在主键的确定性上，不为此在 §5 之外
+新增列。
+
 ---
 
 ## 5. 数据模型
@@ -204,6 +213,27 @@ llm-code-tutor/
   与 `ModelConfig.embedding_*`（配置的期望值）分列，两者不一致时由
   `GET /admin/model-config/embedding-consistency` 告警（§8.7 步骤 4）。
 
+**P5 补记 —— `answer` / `test_cases` 的各题型形态**（§5 只写了「JSON」，此处定稿；
+判题、admin 写入校验与种子共用同一份规则）：
+
+| 题型 | `Exercise.answer` | `Exercise.options` / `test_cases` | 比对规则 |
+|---|---|---|---|
+| choice | 选项键字符串，如 `"B"` | `options = {"A": 文本, "B": 文本, …}`（键值对象，非数组） | 键全等 |
+| multi | 选项键数组，如 `["A","C"]`（种子内按字母序存储） | `options` 同上 | 集合比较，乱序选择等价 |
+| blank | 参考答案文本 | 无 | 去首尾空白 + `casefold` 忽略大小写 |
+| short | 参考答案文本（解析放 `explanation`） | 无 | 转 AI 评分（§5.1 路 4） |
+| coding | `{"language", "solution"}` | `test_cases = {"language", "cases":[{"stdin","expected_stdout"}]}` | `stdout.strip() == expected_stdout.strip()` |
+
+- **执行语言归属 `test_cases`**（它决定用什么跑）；学生只交 `{"source": 源码}`，不带
+  语言 —— 杜绝「学生语言与用例语言不一致」。
+- `Submission.answer` 与学生视图同形（即上表的作答侧）。
+- `attempt_no`：同一 `(user, exercise)` 现有提交数 + 1，从 1 递增。同用户并发提交的
+  竞态在单 worker 演示规模下显式接受（无唯一约束）—— 重号只影响"第几次作答"的显示。
+- `judge_detail` 各题型形态：choice/blank `{"method":"direct","passed"}`；
+  multi `{"method":"direct","missing":[],"wrong":[]}`；
+  coding `{"method":"executed","language","budget_exceeded","budget_limit_s","cases":[…]}`；
+  short `{"ai_scored":true,"judge_mode":"model"|"mock_heuristic","model","provider","token_usage","feedback"}`。
+
 ### 5.1 判题三路
 
 - **单选题、填空题**（choice / blank）：后端比对 `answer` 即时判分，`is_correct` 直接落定，得分 0 或 100。
@@ -212,6 +242,31 @@ llm-code-tutor/
 - **简答题**（short）：转 AI 评分，`is_correct` 与 `score` 由大模型给出并标记 `judge_detail.ai_scored=true`；**得分 < 60 视为错误**，计入错题本。所有简答题判定均为参考分，前端必须展示"AI 参考评分"标识。
 
 四种题型的错题归集判定统一为：`is_correct == false` 即入错题本。
+
+**P5 补记 —— 判题落地口径**：
+
+- **多选题空作答**（提交空数组、或缺少作答键）判 **0 分且 `is_correct=false`，但不算
+  「漏选」**：`∅` 虽然是数学意义上的真子集，「漏选」的语义是「选了部分」—— 若按子集
+  判定，"交白卷得 50" 就成了规则漏洞。`judge_detail.missing` 此时填全部正确键、
+  `wrong` 为空，供前端区分「没答」与「答漏」。
+- **编程题 15s 预算**由服务层跨用例自计（`CodeExecutor` 端口无 per-call 超时参数）：
+  每个用例执行**前**先查预算，超预算即中止剩余用例（`judge_detail.cases[]` 里标
+  `skipped:true, skip_reason:"budget_exceeded"`），按 `已通过 / 全部用例数` 取比例分，
+  未全部通过一律 `is_correct=false`。`budget_limit_s` 随详情回传，前端可解释扣分。
+- **简答题的评分调用不走 `PromptAssembler`**：装配器的四套主模板经 `_system.j2`
+  无条件注入防抄袭档位与底线内容，会污染要求严格 JSON 输出的判分调用。system / user
+  两条消息由领域层 `domain/exercise/short_scoring.py` 构建（判分是内部调用，§7.1
+  完全豁免，不面向学生输出）。system 要求只输出
+  `{"score": 0-100, "is_correct": bool, "feedback": string}`。
+- **Mock 模式不发起 LLM 调用**：判定取配置层（`ModelConfig.provider`，同 §8.4 口径），
+  改用确定性启发式（学生作答与参考答案的字符二元组重合度 → 0-100），
+  `judge_detail.judge_mode="mock_heuristic"`、`ai_scored=true` 照记。**前端标识必须
+  区分 judge_mode**：`model` → 「AI 参考评分」，`mock_heuristic` →
+  「AI 参考评分（Mock 启发式）」—— Mock 可接受，但降级必须可见（§9 红线）。
+- **真提供方输出解析失败 → `5021`，且不落 `Submission`、不入错题本**：把「模型故障」
+  记成「学生答错」比丢一次提交更糟（学生无辜背一个错题条目，画像也被污染）。
+- **硬规则**：模型给出 `score < 60` 时强制 `is_correct=false`，不采信模型自报的
+  `is_correct`（§5.1「得分 <60 视为错误」）。
 
 ---
 
@@ -239,6 +294,12 @@ llm-code-tutor/
 **中断不是服务端故障**：学生点「停止」时发 `error` 事件且 `code=4990`，前端只结束打字机、
 不弹红色错误提示；真正的调用失败才用 `5021`。两者混用会让一次正常的用户操作显示成故障。
 
+**P5 附注 —— 习题辅导 `hint` 的 `done` 是同源变体**：该链路没有 Message 实体，故以
+`exercise_id` + `intent` 两个字段替代 `message_id`，其余语义一个不减：
+`{exercise_id, intent, token_usage, usage_estimated, model, provider, rag_hit, degraded,
+fallback_reason}`（九字段）。`degraded` 取检索与提供方的或、`fallback_reason` 优先报
+检索的；`citation` 仍先于 `token`；中断仍是 `4990`。
+
 ### 6.2 端点清单
 
 | 域 | 端点 | 说明 |
@@ -252,14 +313,55 @@ llm-code-tutor/
 | code | `POST /code/analyze` `{language, source}` → `{static_report, ai_report, analysis_id, reused}` | 评改意图，豁免防抄袭约束；`reused=true` 表示命中历史、按用户复用了既有 `CodeAnalysis` |
 | code | `POST /code/run` `{language, source, stdin}` → `{status, stdout, stderr, exit_code, duration_ms, limit_detail, run_id}` | 5s 墙钟超时；经线程池卸载，并发上限 2，超出返回 `429` |
 | code | `GET/POST/PATCH/DELETE /code/sessions` `GET /code/runs` | 编辑器草稿与历史 |
-| exercise | `GET /exercises?type=&difficulty=&knowledge_tag=` `GET /exercises/{id}` `POST /exercises/{id}/submit` `POST /exercises/{id}/hint` `{intent: seek_answer\|review_my_code}` → SSE | intent **必填**，由前端入口按钮显式传入；`seek_answer` 受防抄袭档位约束，`review_my_code` 豁免 |
-| mistake | `GET /mistakes?mastered=` `DELETE /mistakes/{id}/mastered` `GET /mistakes/profile` `GET /mistakes/recommendations?limit=` | |
+| exercise | `GET /exercises?type=&difficulty=&knowledge_tag=&page=&page_size=` `GET /exercises/{id}` `POST /exercises/{id}/submit` `POST /exercises/{id}/hint` `{intent, answer?}` → SSE | intent **必填**，由前端入口按钮显式传入；`seek_answer` 受防抄袭档位约束，`review_my_code` 豁免。**P5 落地口径见下方「exercise / mistake / admin·exercise 端点补记」** |
+| mistake | `GET /mistakes?mastered=` `DELETE /mistakes/{id}/mastered` `GET /mistakes/profile` `GET /mistakes/recommendations?limit=` | 同上 |
+| admin·exercise（P5 补记） | `POST /admin/exercises` `GET /admin/exercises?type=&difficulty=&knowledge_tag=&status=&page=&page_size=` `GET /admin/exercises/{id}` `PATCH /admin/exercises/{id}` `DELETE /admin/exercises/{id}` | 补齐 §6.2 原先缺失的出题入口（习题来源之二：内置种子 + 后台 CRUD）。审计 action `admin_exercise_create/update/delete` |
 | admin | `GET /admin/users?q=&role=&status=` `POST /admin/users` `PATCH /admin/users/{id}` `DELETE /admin/users/{id}` | |
 | admin | `GET/PUT /admin/model-config` `POST /admin/model-config/test` | test 返回 `{ok, latency_ms, sample}`；PUT 改 embedding 配置时可能返回 409 |
 | admin·embedding（P1 补记） | `PUT /admin/model-config/embedding` `{provider, model, confirm}` | §8.7 的入口。已有切片且 `confirm=false` → `409` + `{need_rebuild:true, knowledge_base_ids, from, to}`；确认后保存配置并**同步**触发全量重建，返回 `{rebuilt:[...], failed:[...]}`。**任一知识库重建失败即回滚配置**并抛 `5000` + `{rolled_back_to}` —— 否则会出现「新配置 + 旧维度向量」的静默零命中 |
 | admin·embedding（P1 补记） | `GET /admin/model-config/embedding-consistency` | §8.7 步骤 4：比对配置的模型与切片上记的模型，返回不一致清单。**只告警不自动修复**（自动重建可能在无人值守时吃掉几分钟 CPU） |
 | admin | `GET /admin/logs?action=&user_id=&start=&end=` `GET /admin/overview` `GET /admin/anti-plagiarism/stats` | overview 为仪表盘聚合；stats 返回各档位拦截率 |
 | system | `GET /health` | |
+
+**exercise / mistake / admin·exercise 端点补记（P5）**：
+
+- **学生端只暴露 `status=published`**：列表与详情对 draft 与不存在一律 `4040`
+  （不泄露「存在但未发布」）。`POST /exercises/{id}/submit` 同口径先校验再判分。
+- **`GET /exercises` 响应为 `{items, total, facets.knowledge_tags}`**：分页按 §6.2 统一
+  约定；`facets.knowledge_tags` 是 published 习题的标签去重清单，**不受 `knowledge_tag`
+  筛选影响** —— 前端筛选下拉需要闭环的数据源，否则选完一个标签就没法换标签。
+  spec 原本无此字段，按「实际响应为最小集超集」的既有惯例收录。
+- **学生详情不泄题**：不含 `answer` / `explanation` / `test_cases`；coding 题附
+  `language`（取 `test_cases.language`）。正确答案与解析只在提交后的响应里揭示。
+- **`POST /exercises/{id}/hint` 请求体 `{intent, answer?}`**：`intent` 取
+  `seek_answer` / `review_my_code` 两值，`judging` 是内部判分意图、**不对 HTTP 开放**
+  （不在取值内 → 422）。`answer` 与 submit 同形，`review_my_code` **必填**（缺失 → 422），
+  `seek_answer` 可缺省。本端点**没有配套的 `/stop`**：中断由前端 `AbortController`
+  断连承担（§8.1 的第二重保险），per-call 取消 Event 与 `4990` 语义保留与 chat 同构。
+- **`GET /mistakes?mastered=`** 三态（不传=全部、`true`=已掌握、`false`=未掌握），
+  返回裸数组、每条附学生视图的习题摘要（单学生条目上限即题库规模，不分页）。
+  **`GET /mistakes/recommendations?limit=`** 默认 5、取值范围 1–20（越界 422）。
+  **`DELETE /mistakes/{id}/mastered`** 的 `{id}` 是 MistakeBookEntry.id，非本人条目与
+  不存在一律 `4040`。
+- **admin CRUD**：`source` 与 `created_by` 都不由请求体决定 —— 创建时服务端写死
+  `source=admin`、`created_by=当前管理员`，`status` 缺省 `draft`。`PATCH` 的 schema 不含
+  `source` 且 **`extra=forbid`**：传 `source` 或任何 schema 外字段一律 **422 显式拒绝**，
+  不静默忽略（静默忽略属「看起来成功、实际没生效」的静默型失败）。跨题型一致性
+  （choice/multi 必带 options 且答案键 ⊆ options、coding 必带 `test_cases.language` +
+  非空 cases）在 PATCH **合并后**重新校验，失败 422 且不落半截改动。
+  `DELETE` **手工级联**删该习题的 Submission 与 MistakeBookEntry（§5 无 ForeignKey，
+  级联靠服务层序列，同 §8.9 用户硬删除口径），删除计数写进 `AuditLog.detail`。
+  `source` 语义闭环：`seed`（种子写入，管理员不可改）· `admin`（CRUD 写入）·
+  `ai`（预留枚举值，本批无写入入口）。
+- **`POST /exercises/{id}/submit` 的编程题作答形态错误 → `4220`**（HTTP 422）：
+  `answer` 必须是 `{"source": 非空源码}`。本批只新增这一个错误码并注册进 `CODE_STATUS`；
+  其余沿用既有码（`4040` 越权、`5021` 评分/生成失败、`5032` 检索链路继承、`4290` 执行配额、
+  `4990` 只进 SSE 载荷）。参数校验沿用 FastAPI 的 422。
+- **`DELETE /mistakes/{id}/mastered` 落 `AuditLog(action=mistake_reset_mastered)`**：
+  它改变学习状态（重新开启一轮），留痕口径与 `chat_conversation_delete` 同例。
+- **错题本的三个出口都只认 published 习题**：条目列表、画像聚合与重置回显一律过滤
+  `status != published` 的习题 —— 管理员把某道习题下架后，它的题干与选项不得再从错题本
+  泄出（否则绕过上面那条不变量）；这类条目按「无主条目」同口径丢弃，重置返回 `4040`。
 
 ---
 
@@ -294,6 +396,23 @@ llm-code-tutor/
 `intent` 由前端**显式传入**，是契约而非推断：习题辅导界面提供「获取思路」（`seek_answer`）与「批改我的作答」（`review_my_code`）两个入口按钮，`/code/analyze` 固定传 `review_my_code`。
 
 **聊天入口一律固定 `seek_answer`，不做任何语义推断。** 学生提问时经常会顺手贴上题目给出的示例代码；若按"消息含代码块即判为评改"来推断，就会误判为豁免并直接给出完整答案 —— **防抄袭将在最常用的入口被绕过**。推断错误的代价（泄露完整答案）与收益不对称，因此豁免只在显式入口生效。
+
+**P5 补记 —— 习题辅导的两种意图如何落地**：
+
+| 入口 | 模板 | 档位 | 问题串内容 |
+|---|---|---|---|
+| 学生点「获取思路」 | `exercise_hint.j2` | **受约束**（`resolve_mode` 施加配置档位） | 题型 + 题干 + 选项 + 知识点标签；**不含参考答案与解析** |
+| 学生点「批改我的作答」 | `mistake_review.j2` | **豁免**（`mode=None`） | 上述内容 + 参考答案 + 解析 + 学生作答 |
+
+- `seek_answer` 的问题串刻意不含答案：档位是提示词层的**软**约束，一旦模型不听话把
+  实现吐出来，泄题的就是这条串本身；不给它答案，是最便宜的硬保证。
+- `review_my_code` 豁免的是**档位，不是底线**：`_floor.j2` 三条底线仍由 `_system.j2`
+  无条件注入（同 §8.4 对 `/code/analyze` 的处理）。
+- **底线检测的输入是题干**（`floor_hit = detect_floor_violation(stem)`）：题干充当学生
+  的请求文本；学生作答是**答案不是请求**，不做检测 —— 与 §8.4「不对代码做检测」同口径，
+  否则关键词规则在代码/答案文本上误判率极高。
+- 判分（`judging`）完全豁免且**不走装配器**：简答题评分的 prompt 由领域层构建，见 §5.1
+  的 P5 补记。`judging` 作为 HTTP 入参不被接受（内部意图）。
 
 ### 7.2 RAG 增强装配链路
 
@@ -351,6 +470,14 @@ llm-code-tutor/
 流中断发 `error`，已生成内容仍落库并标记 `truncated=true`。无论正常结束还是异常中断，`AuditLog(action=chat)` 均在 `finally` 中写入。
 
 **中断实现**：`asyncio.Event` 存于内存注册表，键为 `(conversation_id, request_id)`；生成循环每次 yield 前检查一次 Event；`/stop` 端点与「同一会话发起新请求」两种情形均置位；流结束或异常时在 `finally` 中注销。前端 `AbortController` 断开时 FastAPI 的 `request.is_disconnected()` 亦能感知，作为第二重保险。**该内存注册表依赖单 worker，是 §3.1 假设 5 的又一理由。**
+
+**P5 补记 —— 习题辅导复用同一注册表，但作用域键必须是 per-user**：hint 没有会话可当
+作用域，若直接用 `exercise_id` 建键，`create()` 的「同作用域旧流置位」语义就会让
+**B 同学发起辅导掐断 A 同学在同一习题上进行中的流**（A 收到 `4990`）—— 会话属于单个
+用户所以 chat 安全，而**习题是共享实体**。故 hint 的作用域键取
+`f"{user_id}:{exercise_id}"`，保留「同一学生同一习题再发起一次辅导 → 取消自己上一条」
+的原意。hint 亦无 `/stop` 端点（§6.2 补记），`finally` 注销与审计留痕
+（`AuditLog(action=exercise_hint)`）与 chat 同构。
 
 ### 8.2 知识库索引
 
@@ -431,6 +558,28 @@ llm-code-tutor/
 
 `GET /mistakes/profile`：按 `knowledge_tags` 聚合 `SUM(wrong_count)`，排除已掌握条目。
 `GET /mistakes/recommendations`：取 top-3 薄弱 tag → 选题（排除已掌握）→ 按难度升序返回。**不足 `limit` 时按难度递增补足同课程随机题**，并在响应中标注 `filled_by=random`，避免把随机题误当个性化推荐。
+
+**P5 补记 —— 判题与错题归集的落地口径**：
+
+- **错题条目只收错误**：`is_correct=false` 才建条目（「无条目则创建」说的是错误分支）；
+  从未答错的正确提交**不建条目**。但已存在的条目在答对时**必须推进**
+  `consecutive_correct`，否则永远到不了「连续 2 次」。
+- **画像聚合在 Python 层**：`knowledge_tags` 是 JSON 列，无法直接 SQL 聚合；
+  声明规模（错题条目 < 千）下成本可忽略（§3.2 权衡 3）。已掌握条目排除在聚合之外。
+- **RandomFill 的「同课程」口径**：Exercise 无课程维度（§5 未给 `course_code` 列），
+  故随机补足从**全部 published 习题**中选取（排除已在推荐清单中的、排除该生已掌握的）。
+  补足项按 `(difficulty, created_at, id)` **确定性**升序选取 —— 演示规模下「可复现」比
+  「真随机」更有价值（答辩时同一学生刷新两次不该看到两套推荐）。
+- **手动重置掌握度**（`DELETE /mistakes/{entryId}/mastered`）的语义是**开启新一轮练习
+  周期**：`mastered=false`、`mastered_at=null`、**`consecutive_correct=0`**；
+  `wrong_count` 与 `last_wrong_answer/last_wrong_at` **保留**。理由：(a) 掌握度的定义是
+  「连续 2 次答对」，跨周期的旧连对不应计入新一轮的「连续」；(b) 若保留计数，重置后
+  答对 1 次即重新掌握，「重置掌握度」按钮形同虚设 —— 静默型语义失效，违反本特性初衷；
+  (c) 不可篡改的历史是 `wrong_count` 与 `last_wrong_*`（都保留），`consecutive_correct`
+  是状态机状态而非历史，清零不是篡改。非本人条目与不存在一律 `4040`（不泄露存在性）。
+- 判题链路另见 §5.1 的 P5 补记（四路落地口径、15s 预算、Mock 启发式与 `5021` 不落库）、
+  §5 的 P5 补记（各题型 `answer` / `test_cases` 形态与 `judge_detail` 结构表）与 §6.2 的
+  exercise 端点补记（提交后揭示正确答案与解析、`4220` 编程题作答形态错误）。
 
 ### 8.6 知识库删除与孤儿向量清理
 
@@ -543,6 +692,14 @@ llm-code-tutor/
 | P6 | 管理后台收口：用户管理（软删除为默认路径，硬删除级联清理但保留审计）、模型配置页、日志页、防抄袭统计、仪表盘 + 种子数据与 README | P0 |
 
 P0 之后每批均可独立演示。
+
+**P5 落地实况**：题库种子为 **40 道**（choice 10 / multi 6 / blank 8 / short 8 / coding 8；
+难度 1×8 / 2×10 / 3×12 / 4×7 / 5×3），知识点标签取 12 项封闭词表（变量与赋值、数据类型、
+运算符、控制流、循环、函数、列表、字典、字符串、切片、推导式、异常处理），**每个标签至少
+被 2 道习题引用**，使薄弱画像与定向推荐可闭环。未提供课程大纲，故按 §11 的默认口径
+（Python 基础知识点）出题。coding 题的参考答案由 `tests/test_seed_exercises.py` 用
+**真** `SubprocessCodeExecutor` 逐用例实测通过（Fake 执行器只能证明接线，证明不了习题
+可做）。管理后台 CRUD 见 §6.2 的 admin·exercise 行。
 
 ---
 

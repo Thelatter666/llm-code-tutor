@@ -578,6 +578,55 @@ async def test_patch_coding_requires_test_cases(client, factory):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"stem": None},
+        {"type": None},
+        {"difficulty": None},
+        {"status": None},
+        {"knowledge_tags": None},
+        {"explanation": None},
+        {"answer": None},
+    ],
+)
+async def test_patch_rejects_explicit_null_on_non_null_columns(client, factory, patch):
+    """显式 null 若放过，落库时才撞 NOT NULL → 5000。入口就该 422。"""
+    token = await _admin_token(client, factory, "nuller")
+    created = (await _create(client, token, _choice_body())).json()["data"]
+
+    r = await client.patch(
+        f"/api/v1/admin/exercises/{created['id']}", json=patch, headers=_auth(token)
+    )
+    assert r.status_code == 422, f"{patch} 应被入口拒绝而不是 500"
+    async with factory() as s:
+        row = await s.get(Exercise, created["id"])
+        assert row.difficulty == 1 and row.status == "draft", "拒绝后不得留下改动"
+
+
+@pytest.mark.asyncio
+async def test_patch_options_null_is_accepted_but_shape_checked(client, factory):
+    """options 是真可空列：清空 choice 的 options 由合并校验拒（不是 NOT NULL 崩溃）。"""
+    token = await _admin_token(client, factory, "nuller2")
+    created = (await _create(client, token, _choice_body())).json()["data"]
+
+    r = await client.patch(
+        f"/api/v1/admin/exercises/{created['id']}", json={"options": None}, headers=_auth(token)
+    )
+    assert r.status_code == 422, "choice 没有 options 就是判不了的脏数据"
+
+    blank = (
+        await _create(
+            client, token, {"type": "blank", "stem": "填空", "answer": "int", "difficulty": 1}
+        )
+    ).json()["data"]
+    ok = await client.patch(
+        f"/api/v1/admin/exercises/{blank['id']}", json={"options": None}, headers=_auth(token)
+    )
+    assert ok.status_code == 200, "blank 的 options 本就该为空"
+
+
+@pytest.mark.asyncio
 async def test_patch_missing_exercise_is_4040(client, factory):
     token = await _admin_token(client, factory, "ghost")
     r = await client.patch("/api/v1/admin/exercises/no-such", json={"status": "published"}, headers=_auth(token))

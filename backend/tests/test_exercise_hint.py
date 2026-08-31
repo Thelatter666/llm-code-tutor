@@ -27,6 +27,7 @@ from app.domain.exercise.hint import (
     TEMPLATE_MISTAKE_REVIEW,
     build_hint_question,
     build_retrieval_query,
+    is_student_answer,
     render_answer,
     template_for,
 )
@@ -155,6 +156,16 @@ def test_retrieval_query_is_stem_plus_tags_only():
 )
 def test_render_answer_covers_every_shape(answer, expected):
     assert render_answer(answer) == expected
+
+
+def test_is_student_answer_matches_the_submit_shape():
+    """hint 的作答门禁 = submit 的学生形态，不接受题库参考答案形态。"""
+    accepted = ["B", "  x ", ["A", "C"], {"source": "print(1)"}]
+    rejected = [None, "", "   ", [], ["", "  "], {}, {"source": "  "}, {"solution": "print(1)"}, 123, True]
+    for value in accepted:
+        assert is_student_answer(value) is True, value
+    for value in rejected:
+        assert is_student_answer(value) is False, value
 
 
 def test_hint_domain_module_is_pure():
@@ -542,6 +553,33 @@ async def test_registration_is_discarded_after_the_stream(session, exercise):
 
 
 @pytest.mark.asyncio
+async def test_client_disconnect_still_writes_audit_and_unregisters(session, exercise):
+    """断连即中断（裁定 10）：前端 AbortController 断开 → 生成器被 aclose()。
+
+    hint 没有 /stop 端点，这是唯一的停止路径，所以「已产出的部分不写库、
+    审计照落、注册表照注销」必须有用例守住 —— 否则它是未验证的口头承诺。
+    """
+    cancels = CancellationRegistry()
+    svc, _ = _svc(session, cancels=cancels)
+
+    gen = svc.stream_hint(
+        exercise_id=exercise.id,
+        user_id="u-1",
+        intent="seek_answer",
+        request_id=RID,
+    )
+    assert (await gen.__anext__()).event == EVENT_TOKEN  # 流已开始
+    await gen.aclose()  # 客户端断开
+
+    assert cancels.size() == 0, "aclose 走 finally，注册表必须注销"
+    row = (
+        await session.execute(select(AuditLog).where(AuditLog.action == "exercise_hint"))
+    ).scalar_one()
+    assert row.request_id == RID
+    assert row.detail["chars"] >= 1, "已产出的增量长度要如实留痕"
+
+
+@pytest.mark.asyncio
 async def test_mid_stream_cancellation_stops_the_token_stream(session, exercise):
     """流已开始后取消：剩余增量不再产出，末事件为 4990。"""
     cancels = CancellationRegistry()
@@ -658,7 +696,12 @@ async def test_audit_is_written_when_interrupted(session, exercise):
 
 
 @pytest.mark.asyncio
-async def test_missing_or_draft_exercise_raises_4040(session):
+async def test_unpublished_exercise_becomes_an_error_event_not_a_raise(session):
+    """流内二次取 published（TOCTOU）失败时：发 error 事件并留审计，不留零帧静默断流。
+
+    路由侧的第一次校验负责把 draft/不存在挡在 HTTP 404；走到生成器说明中间
+    发生了变化 —— HTTP 200 已发出，只能靠流内 error 事件表达。
+    """
     draft = Exercise(
         type="blank",
         stem="未发布",
@@ -673,9 +716,16 @@ async def test_missing_or_draft_exercise_raises_4040(session):
     svc, _ = _svc(session)
 
     for bad_id in (draft.id, "no-such-exercise"):
-        with pytest.raises(ApiError) as exc:
-            await _stream(svc, bad_id)
-        assert exc.value.code == 4040, "越权前置校验，不进入流"
+        events = await _stream(svc, bad_id)
+        assert [e.event for e in events if e.event == EVENT_TOKEN] == []
+        assert events[-1].event == EVENT_ERROR
+        assert events[-1].data["code"] == 4040
+
+    rows = (
+        await session.execute(select(AuditLog).where(AuditLog.action == "exercise_hint"))
+    ).scalars().all()
+    assert len(rows) == 2, "两条失败路径都要留审计"
+    assert {row.detail["error_code"] for row in rows} == {4040}
 
 
 # ================================================================ HTTP 层
@@ -864,6 +914,10 @@ async def test_hint_validates_the_body(client, factory):
         {"intent": "review_my_code"},  # 批改缺 answer
         {"intent": "review_my_code", "answer": ""},
         {"intent": "review_my_code", "answer": {"source": "   "}},
+        # 参考答案形态与任意标量都不是学生作答：能问批改却提交不了判分就是契约分裂
+        {"intent": "review_my_code", "answer": {"solution": "print(1)"}},
+        {"intent": "review_my_code", "answer": 123},
+        {"intent": "review_my_code", "answer": True},
         {"intent": "judging"},  # 内部意图不对 HTTP 开放
         {"intent": "make_me_a_sandwich"},
         {},  # intent 缺省

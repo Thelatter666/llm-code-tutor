@@ -1,4 +1,5 @@
 import type { Citation, TokenUsage } from './chat'
+import type { RunStatus } from './code'
 
 /**
  * 习题与错题本的出入参（对齐后端 `app/schemas/exercise.py`）。
@@ -58,7 +59,8 @@ export interface JudgeCase {
   actual_stdout: string | null
   passed: boolean
   duration_ms: number
-  status: string
+  /** 执行器回报的领域状态（与 /code/run 同一取值集，见 types/code.ts::RunStatus） */
+  status: RunStatus
   skipped?: boolean
   skip_reason?: string
 }

@@ -10,6 +10,7 @@
    直接把学生教错，这是题库最不可接受的缺陷。
 """
 
+import re
 import uuid
 from collections import Counter
 
@@ -97,6 +98,24 @@ def test_blank_answers_have_a_single_unambiguous_shape():
         answer = item["answer"]
         assert answer == answer.strip() and answer, item["slug"]
         assert "\n" not in answer, item["slug"]
+
+
+def test_blank_answers_are_not_printed_in_their_own_stems():
+    """填空题答案以**独立 token** 出现在题干里 = 这道题不测量任何东西（抄题干即得 100）。
+
+    种子初稿真出过这个缺陷（py-blank-01 的题干印着 `type(3.5)`），故固化成回归网。
+    判定必须按 token 边界：py-blank-03 的答案 `cde` 是题干代码串 `"abcdefgh"` 的子串，
+    但那不构成泄露 —— 裸 `in` 会把它误报。单字符答案跳过（误报成本高于收益）。
+    """
+    for item in EXERCISES:
+        if item["type"] != "blank":
+            continue
+        answer = item["answer"]
+        if len(answer) < 2 or not answer.isascii():
+            continue
+        # 前后不是字母/数字/下划线才算独立出现（type( → 命中；abcdefgh 里的 cde → 不命中）
+        leaked = re.search(rf"(?<![A-Za-z0-9_]){re.escape(answer)}(?![A-Za-z0-9_])", item["stem"])
+        assert leaked is None, (item["slug"], answer, item["stem"])
 
 
 def test_knowledge_tags_are_within_the_closed_vocabulary_and_covered():

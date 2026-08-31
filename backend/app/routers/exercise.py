@@ -15,10 +15,10 @@ from fastapi.responses import StreamingResponse
 
 from app.core.deps import CurrentRidDep, SessionDep, get_current_user
 from app.core.responses import ok
-from app.domain.exercise.judging import EXERCISE_TYPES
 from app.infrastructure.persistence.models import User
 from app.infrastructure.sse import format_sse
 from app.schemas.exercise import (
+    TYPE_PATTERN,
     ExerciseDetail,
     ExerciseListItem,
     HintIn,
@@ -37,7 +37,7 @@ async def list_exercises(
     session: SessionDep,
     rid: CurrentRidDep,
     user: UserDep,
-    type: Annotated[str | None, Query(pattern=f"^({'|'.join(EXERCISE_TYPES)})$")] = None,
+    type: Annotated[str | None, Query(pattern=TYPE_PATTERN)] = None,
     difficulty: Annotated[int | None, Query(ge=1, le=5)] = None,
     knowledge_tag: str | None = None,
     page: Annotated[int, Query(ge=1)] = 1,

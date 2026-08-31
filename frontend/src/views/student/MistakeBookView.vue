@@ -41,18 +41,42 @@ const masteredParam = computed(() =>
 /** 画像里最高的 wrong_count，供条形宽度归一化（无数据时避免除零）。 */
 const peakWrong = computed(() => profile.value.reduce((max, p) => Math.max(max, p.wrong_count), 0))
 
+/** 三块面板各自独立的错误态：一个接口失败不该把已取到的条目与画像一起清空。 */
+const errors = ref({ entries: '', profile: '', recommendations: '' })
+
+/**
+ * 单块面板的取数：失败只标记自己那一块。
+ * `load()` 里三块并行发起，互不牵连。
+ */
+async function loadOne<T>(
+  key: keyof typeof errors.value,
+  request: () => Promise<{ data: { data: T | null } }>,
+  assign: (value: T) => void,
+) {
+  errors.value[key] = ''
+  try {
+    const { data } = await request()
+    assign(data.data ?? ([] as never))
+  } catch {
+    errors.value[key] = '加载失败，请稍后重试'
+  }
+}
+
 async function load() {
   loading.value = true
   try {
-    const [list, prof, rec] = await Promise.all([
-      mistakeApi.listMistakes(masteredParam.value),
-      mistakeApi.getProfile(),
-      mistakeApi.getRecommendations(5),
+    await Promise.all([
+      loadOne('entries', () => mistakeApi.listMistakes(masteredParam.value), (v) => {
+        entries.value = v
+      }),
+      loadOne('profile', mistakeApi.getProfile, (v) => {
+        profile.value = v
+      }),
+      loadOne('recommendations', () => mistakeApi.getRecommendations(5), (v) => {
+        recommendations.value = v.items
+        weakTags.value = v.weak_tags
+      }),
     ])
-    entries.value = list.data.data ?? []
-    profile.value = prof.data.data ?? []
-    recommendations.value = rec.data.data?.items ?? []
-    weakTags.value = rec.data.data?.weak_tags ?? []
   } finally {
     loading.value = false
   }
@@ -61,8 +85,9 @@ async function load() {
 onMounted(load)
 
 async function reloadFilter() {
-  const { data } = await mistakeApi.listMistakes(masteredParam.value)
-  entries.value = data.data ?? []
+  await loadOne('entries', () => mistakeApi.listMistakes(masteredParam.value), (v) => {
+    entries.value = v
+  })
 }
 
 /** UTC 直读，不做本地化换算 —— 演示机上标了时区反而容易误读。 */
@@ -87,11 +112,13 @@ function barWidth(count: number): string {
 
 async function resetMastery(entry: MistakeEntryOut) {
   const stem = entry.exercise.stem.split('\n')[0].slice(0, 30)
-  await ElMessageBox.confirm(
-    `重置后该习题重新进入「未掌握」，连对计数归零；错误次数与上次错误记录会保留。`,
+  // Element Plus 的确认框在「取消」时 reject：不接住就是未处理的 rejection
+  const confirmed = await ElMessageBox.confirm(
+    '重置后这道习题重新进入「未掌握」，连对计数归零；错误次数与上次错误记录会保留。',
     `重置掌握度：${stem}…`,
     { type: 'warning', confirmButtonText: '重置掌握度', cancelButtonText: '取消' },
-  )
+  ).catch(() => null)
+  if (!confirmed) return
   resetting.value = entry.id
   try {
     await mistakeApi.resetMastery(entry.id)
@@ -122,6 +149,7 @@ const unmasteredCount = computed(() => entries.value.filter((e) => !e.mastered).
         <el-radio-button value="mastered">已掌握</el-radio-button>
       </el-radio-group>
 
+      <p v-if="errors.entries" class="error">{{ errors.entries }}</p>
       <ul v-loading="loading" class="list">
         <li v-for="entry in entries" :key="entry.id" class="item">
           <div class="item__head">
@@ -211,6 +239,7 @@ const unmasteredCount = computed(() => entries.value.filter((e) => !e.mastered).
             </div>
           </li>
         </ul>
+        <p v-else-if="errors.profile" class="error">{{ errors.profile }}</p>
         <p v-else class="empty">暂无薄弱知识点数据。</p>
       </section>
 
@@ -220,7 +249,8 @@ const unmasteredCount = computed(() => entries.value.filter((e) => !e.mastered).
           <template v-if="weakTags.length">
             针对薄弱知识点：{{ weakTags.join('、') }}
           </template>
-          <template v-else>还没有错题记录，以下为随机题。</template>
+          <template v-else-if="!entries.length">还没有条目，以下按难度递增随机补足。</template>
+          <template v-else>暂无薄弱知识点画像（已掌握的条目不计入），以下随机补足。</template>
         </p>
         <ul class="recs">
           <li v-for="rec in recommendations" :key="rec.exercise.id" class="rec">
@@ -240,7 +270,8 @@ const unmasteredCount = computed(() => entries.value.filter((e) => !e.mastered).
               <el-button size="small" type="primary" plain>去做这道习题</el-button>
             </router-link>
           </li>
-          <li v-if="!recommendations.length" class="empty">题库暂无可推荐的习题。</li>
+          <li v-if="errors.recommendations" class="error">{{ errors.recommendations }}</li>
+          <li v-else-if="!recommendations.length" class="empty">题库暂无可推荐的习题。</li>
         </ul>
       </section>
     </aside>
@@ -423,6 +454,12 @@ const unmasteredCount = computed(() => entries.value.filter((e) => !e.mastered).
 .empty {
   font-size: 12px;
   color: var(--color-muted-foreground);
+}
+
+.error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-destructive);
 }
 
 @media (max-width: 1023px) {

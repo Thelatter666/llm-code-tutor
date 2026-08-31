@@ -101,10 +101,10 @@ async def reset_mastered(
     """
     svc = MistakeBookService(session)
     entry = await svc.reset_mastered(user.id, entry_id)
-    exercise = await session.get(Exercise, entry.exercise_id)
+    exercise = await svc.published_exercise(entry.exercise_id)
     if exercise is None:
-        # 习题已不存在（admin 删除未级联的历史脏数据）：条目出不了完整视图，
-        # 与 `list_entries` 丢弃无主条目同口径 —— 不返回半截数据
+        # 习题已下架或被删走（无 FK 现状下的脏数据）：条目出不了完整视图，
+        # 与 `list_entries` 丢弃无主条目同口径 —— 不返回半截数据，也不泄未发布题干
         raise ApiError(4040, "错题条目不存在")
     await AuditService(session).record(
         "mistake_reset_mastered",

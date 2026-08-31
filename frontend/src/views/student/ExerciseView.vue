@@ -6,10 +6,12 @@ import DegradedBanner from '@/components/DegradedBanner.vue'
 import MarkdownView from '@/components/MarkdownView.vue'
 import { newRequestId } from '@/composables/useSse'
 import type { Citation } from '@/types/chat'
+import type { RunStatus } from '@/types/code'
 import type {
   AnswerValue,
   ExerciseDetail,
   ExerciseListItem,
+  ExerciseType,
   HintDoneEvent,
   HintIntent,
   JudgeCase,
@@ -62,12 +64,18 @@ interface HintState {
 }
 const hint = ref<HintState>({ intent: null, text: '', citations: [], done: null, streaming: false })
 let hintAbort: AbortController | null = null
+/**
+ * 辅导请求的身份计数：`intent` 只有两个取值，用它判定「这条流还是不是当前流」
+ * 会让迟到的 abort rejection 把新流的 streaming 置 false。切题、卸载都会中止旧流，
+ * 那些路径不该弹「已停止生成」—— 用户根本没点停止。
+ */
+let hintSeq = 0
 
 // ---------------------------------------------------------------- 列表
 
 async function loadList(autoSelect = true) {
   const { data } = await exerciseApi.listExercises({
-    type: filterType.value as never,
+    type: filterType.value as ExerciseType | '',
     difficulty: filterDifficulty.value,
     knowledgeTag: filterTag.value,
     page: page.value,
@@ -146,6 +154,33 @@ async function submit() {
 
 const judgeCases = computed<JudgeCase[]>(() => result.value?.judge_detail?.cases ?? [])
 
+/**
+ * 执行状态与「是否通过」是两个维度：`status=accepted` 只说明程序正常退出，
+ * 输出对不上仍然不通过。直接把英文状态投给学生会出现红色的「accepted」，
+ * 读起来像通过了。文案与 P4 编辑器页同源。
+ */
+const CASE_STATUS_LABEL: Record<RunStatus, string> = {
+  accepted: '输出与期望不符',
+  runtime_error: '运行出错',
+  timeout: '超时被终止',
+  memory_exceeded: '内存超限被终止',
+  blocked: '命中黑名单，未执行',
+}
+
+function caseTone(row: JudgeCase): 'success' | 'danger' | 'info' {
+  if (row.passed) return 'success'
+  return row.skipped ? 'info' : 'danger'
+}
+
+function caseLabel(row: JudgeCase): string {
+  if (row.skipped) return '超时未执行'
+  if (row.passed) return '通过'
+  return CASE_STATUS_LABEL[row.status] ?? row.status
+}
+
+/** 预算上限取后端回传的 budget_limit_s，不在前端写死 15。 */
+const budgetLimit = computed(() => result.value?.judge_detail?.budget_limit_s ?? 15)
+
 /** 「AI 参考评分」标识必须区分 judge_mode（裁定 5 修订：Mock 可接受，降级必须可见）。 */
 const aiScoreLabel = computed(() => {
   if (!result.value?.ai_scored) return ''
@@ -166,6 +201,7 @@ function displayAnswer(value: AnswerValue): string {
 // ---------------------------------------------------------------- hint（SSE）
 
 function resetHint() {
+  hintSeq += 1  // 让在途流的收尾全部失效（切题与卸载都不该弹「已停止生成」）
   hintAbort?.abort()
   hintAbort = null
   hint.value = { intent: null, text: '', citations: [], done: null, streaming: false }
@@ -178,9 +214,9 @@ async function askHint(intent: HintIntent) {
     return
   }
   const exerciseId = detail.value.id
-  resetHint()
-  hint.value.intent = intent
-  hint.value.streaming = true
+  const seq = ++hintSeq
+  hintAbort?.abort()
+  hint.value = { intent, text: '', citations: [], done: null, streaming: true }
   hintAbort = new AbortController()
   try {
     await exerciseApi.streamExerciseHint({
@@ -197,6 +233,7 @@ async function askHint(intent: HintIntent) {
         hint.value.done = done
       },
       onError: (err) => {
+        if (seq !== hintSeq) return
         // 4990 是学生主动中断，不是服务端故障（spec §6.1）：只收尾，不弹红色错误
         if (err.code === 4990) ElMessage.info('已中断生成')
         else ElMessage.error(err.message || '辅导生成失败')
@@ -204,19 +241,26 @@ async function askHint(intent: HintIntent) {
     })
   } catch (e) {
     const err = e as Error
+    if (seq !== hintSeq) return
     if (err.name === 'AbortError') ElMessage.info('已停止生成')
     else ElMessage.error(err.message)
   } finally {
-    if (hint.value.intent === intent) hint.value.streaming = false
-    hintAbort = null
+    if (seq === hintSeq) {
+      hint.value.streaming = false
+      hintAbort = null
+    }
   }
 }
 
 function stopHint() {
+  // 只有这条路径是「用户点了停止」：不推进 seq，让本流的 catch 正常提示
   hintAbort?.abort()
 }
 
-onBeforeUnmount(() => hintAbort?.abort())
+onBeforeUnmount(() => {
+  hintSeq += 1
+  hintAbort?.abort()
+})
 
 const hintMockProvider = computed(() => hint.value.done?.provider === 'mock')
 </script>
@@ -388,7 +432,7 @@ const hintMockProvider = computed(() => hint.value.done?.provider === 'mock')
             type="warning"
             show-icon
             :closable="false"
-            title="用例执行累计超过 15 秒，剩余用例已中止"
+            :title="`用例执行累计超过 ${budgetLimit} 秒，剩余用例已中止`"
             description="按已通过用例的比例计分；未通过的用例请检查是否写入了无限循环或过重计算。"
           />
           <el-alert
@@ -426,9 +470,7 @@ const hintMockProvider = computed(() => hint.value.done?.provider === 'mock')
             <el-table-column prop="duration_ms" label="耗时(ms)" width="86" />
             <el-table-column label="结果" width="110">
               <template #default="{ row }">
-                <el-tag v-if="row.skipped" size="small" type="info">超时中止</el-tag>
-                <el-tag v-else-if="row.passed" size="small" type="success">通过</el-tag>
-                <el-tag v-else size="small" type="danger">{{ row.status }}</el-tag>
+                <el-tag :type="caseTone(row)" size="small">{{ caseLabel(row) }}</el-tag>
               </template>
             </el-table-column>
           </el-table>

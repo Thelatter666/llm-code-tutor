@@ -343,6 +343,65 @@ async def test_reset_mastered_then_list_unmastered_shows_it(client, factory):
 
 
 @pytest.mark.asyncio
+async def test_unpublished_exercise_disappears_from_the_book(client, factory):
+    """admin 把已入错题本的习题下架后，题干与选项不得再从错题本泄出。
+
+    学生端列表/详情对 draft 一律 4040（spec §6.2），错题本是同一批数据的第三个出口，
+    少过滤一次就等于绕过那条不变量。
+    """
+    ex = await _add_exercise(factory)
+    token = await _register(client, "unpub")
+    me = await client.get("/api/v1/auth/me", headers=_auth(token))
+    uid = me.json()["data"]["id"]
+    entry = await _add_entry(factory, uid, ex.id)
+
+    listed = await client.get("/api/v1/mistakes", headers=_auth(token))
+    assert len(listed.json()["data"]) == 1
+
+    async with factory() as s:
+        row = await s.get(Exercise, ex.id)
+        row.status = "draft"
+        await s.commit()
+
+    hidden = await client.get("/api/v1/mistakes", headers=_auth(token))
+    assert hidden.json()["data"] == [], "已下架习题的题干不得再从错题本泄出"
+    profile = await client.get("/api/v1/mistakes/profile", headers=_auth(token))
+    assert profile.json()["data"] == [], "已下架习题不进画像聚合"
+    rec = await client.get("/api/v1/mistakes/recommendations", headers=_auth(token))
+    picked = {i["exercise"]["id"] for i in rec.json()["data"]["items"]}
+    assert ex.id not in picked
+    reset = await client.delete(f"/api/v1/mistakes/{entry.id}/mastered", headers=_auth(token))
+    assert reset.status_code == 404, "下架习题的条目不出完整视图，也不接受重置"
+
+    async with factory() as s:
+        row = await s.get(Exercise, ex.id)
+        row.status = "published"
+        await s.commit()
+    back = await client.get("/api/v1/mistakes", headers=_auth(token))
+    assert len(back.json()["data"]) == 1, "重新发布后条目回来了"
+
+
+@pytest.mark.asyncio
+async def test_reset_of_unmastered_entry_starts_a_new_round(client, factory):
+    """未掌握的条目也可重置（语义统一为「开启新一轮」）：连对归零、历史保留。
+
+    前端只在已掌握条目上放按钮，但接口不该因此有隐式分支 —— 定义为幂等的
+    「重开一轮」并由用例锁住，比留一个未定义行为诚实。
+    """
+    ex = await _add_exercise(factory)
+    token = await _register(client, "unmastered-reset")
+    uid = (await client.get("/api/v1/auth/me", headers=_auth(token))).json()["data"]["id"]
+    entry = await _add_entry(factory, uid, ex.id, wrong_count=4, consecutive_correct=1, mastered=False)
+
+    r = await client.delete(f"/api/v1/mistakes/{entry.id}/mastered", headers=_auth(token))
+
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert data["consecutive_correct"] == 0, "进行中的连对进度被清零"
+    assert data["wrong_count"] == 4 and data["mastered"] is False
+
+
+@pytest.mark.asyncio
 async def test_profile_aggregates_and_excludes_mastered(client, factory):
     e1 = await _add_exercise(factory, knowledge_tags=["变量与赋值", "数据类型"])
     e2 = await _add_exercise(factory, stem="循环题", knowledge_tags=["循环"], difficulty=2)

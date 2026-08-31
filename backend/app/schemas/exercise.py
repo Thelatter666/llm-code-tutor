@@ -10,16 +10,16 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.domain.chat.policy import REVIEW_MY_CODE
-from app.domain.exercise.hint import render_answer
-from app.domain.exercise.judging import EXERCISE_TYPES
+from app.domain.exercise.hint import is_student_answer
+from app.domain.exercise.judging import EXERCISE_STATUSES, EXERCISE_TYPES
 from app.domain.exercise.shapes import check_exercise_shape
 
 STEM_MAX = 2000
 EXPLANATION_MAX = 4000
 OPTION_MAX = 500
 
-_TYPE_PATTERN = f"^({'|'.join(EXERCISE_TYPES)})$"
-_STATUS_PATTERN = "^(draft|published)$"
+TYPE_PATTERN = f"^({'|'.join(EXERCISE_TYPES)})$"
+STATUS_PATTERN = f"^({'|'.join(EXERCISE_STATUSES)})$"
 
 
 class ExerciseIn(BaseModel):
@@ -30,7 +30,7 @@ class ExerciseIn(BaseModel):
     `domain/exercise/shapes.py`，种子（Task 13）复用同一份。
     """
 
-    type: str = Field(pattern=_TYPE_PATTERN)
+    type: str = Field(pattern=TYPE_PATTERN)
     stem: str = Field(min_length=1, max_length=STEM_MAX)
     options: dict[str, str] | None = None
     answer: Any = None
@@ -38,7 +38,7 @@ class ExerciseIn(BaseModel):
     explanation: str = Field(default="", max_length=EXPLANATION_MAX)
     knowledge_tags: list[str] = Field(default_factory=list)
     difficulty: int = Field(ge=1, le=5)
-    status: str = Field(default="draft", pattern=_STATUS_PATTERN)
+    status: str = Field(default="draft", pattern=STATUS_PATTERN)
 
     @model_validator(mode="after")
     def _cross_type_shape(self) -> "ExerciseIn":
@@ -66,7 +66,7 @@ class ExercisePatch(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    type: str | None = Field(default=None, pattern=_TYPE_PATTERN)
+    type: str | None = Field(default=None, pattern=TYPE_PATTERN)
     stem: str | None = Field(default=None, min_length=1, max_length=STEM_MAX)
     options: dict[str, str] | None = None
     answer: Any = None
@@ -74,12 +74,28 @@ class ExercisePatch(BaseModel):
     explanation: str | None = Field(default=None, max_length=EXPLANATION_MAX)
     knowledge_tags: list[str] | None = None
     difficulty: int | None = Field(default=None, ge=1, le=5)
-    status: str | None = Field(default=None, pattern=_STATUS_PATTERN)
+    status: str | None = Field(default=None, pattern=STATUS_PATTERN)
 
     @model_validator(mode="after")
     def _requires_something_to_change(self) -> "ExercisePatch":
         if not self.model_fields_set:
             raise ValueError("PATCH 至少需要一个待更新字段")
+        return self
+
+    @model_validator(mode="after")
+    def _reject_explicit_null(self) -> "ExercisePatch":
+        """非空列不接受 null：`{"difficulty": null}` 若放过，落库时才是 NOT NULL
+        违约 → 5000 服务器内部错误。在入口就该 422。
+
+        `options` / `test_cases` 是真可空列（只有 coding 需要 test_cases、只有
+        choice/multi 需要 options），传 null 等于清空，由服务层的合并校验兜住。
+        """
+        nullable = {"options", "test_cases"}
+        bad = sorted(
+            name for name in self.model_fields_set if name not in nullable and getattr(self, name) is None
+        )
+        if bad:
+            raise ValueError(f"这些字段不接受 null：{bad}")
         return self
 
 
@@ -153,7 +169,9 @@ class HintIn(BaseModel):
 
     `intent` 是**显式契约而非推断**（ADR-0005）：只接受两种学生可见意图，`judging`
     是内部判分意图、不对 HTTP 开放 —— 它落在 `Literal` 之外，传入即 422。
-    `answer` 与 submit 同形；`review_my_code` 必填，否则「批改我的作答」无物可批改。
+    `answer` 与 submit **同形**：`review_my_code` 必填，且必须是学生形态的作答
+    （`is_student_answer`）—— 题库参考答案的 `{"language","solution"}` 不接受，
+    否则同一份 body 能问批改却提交不了判分，契约就分裂了。
     """
 
     intent: Literal["seek_answer", "review_my_code"]
@@ -161,8 +179,8 @@ class HintIn(BaseModel):
 
     @model_validator(mode="after")
     def _review_requires_answer(self) -> "HintIn":
-        if self.intent == REVIEW_MY_CODE and not render_answer(self.answer).strip():
-            raise ValueError("批改我的作答需要同时提交当前作答内容 answer")
+        if self.intent == REVIEW_MY_CODE and not is_student_answer(self.answer):
+            raise ValueError("批改我的作答需要同时提交学生形态的作答内容 answer")
         return self
 
 

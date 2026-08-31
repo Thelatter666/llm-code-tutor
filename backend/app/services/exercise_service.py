@@ -41,6 +41,7 @@ from app.domain.exercise.judging import (
     JUDGING_BUDGET_S,
     METHOD_EXECUTED,
     SOURCE_ADMIN,
+    STATUS_DRAFT,
     TYPE_BLANK,
     TYPE_CODING,
     TYPE_MULTI,
@@ -450,7 +451,7 @@ class ExerciseService:
         test_cases: dict | None = None,
         explanation: str = "",
         knowledge_tags: list[str] | None = None,
-        status: str = "draft",
+        status: str = STATUS_DRAFT,
         admin_id: str,
         request_id: str,
     ) -> Exercise:
@@ -588,19 +589,13 @@ class ExerciseService:
         spec 未定义 hint 的 `/stop` 端点，中断由前端断连（AbortController）承担，
         流循环里的 cancel 检查与 `4990` 语义保持与 chat 同构。
         """
-        exercise = await self.get_published(exercise_id)
-        if self._shared_llm:
-            # spec §4.2 硬约束 4：管理员改配置即时生效
-            await refresh_llm_config(self._session)
-        cfg = await get_or_create_singleton(self._session)
-        mode = resolve_mode(intent, cfg.anti_plagiarism_mode)
-        # 契约定稿 13：底线检测的输入是题干（它充当学生的请求文本）。学生作答是
-        # 答案不是请求 —— 与 /code/analyze 不对代码做检测同口径（spec §8.4）
-        floor_hit = detect_floor_violation(exercise.stem)
-        params = llm_params(llm_config(cfg))
         scope = _hint_cancel_key(user_id, exercise_id)
         cancel = self._cancels.create(scope, request_id)
 
+        # 前置量都留初值：抛出发生在 finally 之前时，审计仍要能写出完整一行
+        mode: str | None = None
+        floor_hit: str | None = None
+        params = None
         result = SearchResult(rag_hit=False, degraded=False, fallback_reason=None, threshold=0.0)
         texts: list[str] = []
         usage: Usage | None = None
@@ -608,6 +603,20 @@ class ExerciseService:
 
         try:
             try:
+                # 取 published 放在 try 内：路由已先校验过一次，这里是第二次
+                # （TOCTOU 窗口 —— 管理员在两次之间下架时，必须发 error 事件，
+                # 而不是让异常穿过已发出 200 的响应头，留下零帧的静默断流）
+                exercise = await self.get_published(exercise_id)
+                if self._shared_llm:
+                    # spec §4.2 硬约束 4：管理员改配置即时生效
+                    await refresh_llm_config(self._session)
+                cfg = await get_or_create_singleton(self._session)
+                mode = resolve_mode(intent, cfg.anti_plagiarism_mode)
+                # 契约定稿 13：底线检测的输入是题干（它充当学生的请求文本）。学生作答是
+                # 答案不是请求 —— 与 /code/analyze 不对代码做检测同口径（spec §8.4）
+                floor_hit = detect_floor_violation(exercise.stem)
+                params = llm_params(llm_config(cfg))
+
                 # spec §7.2：检索 query 取题干 + 知识点标签，不含学生作答
                 result = await self._retrieval.search(
                     build_retrieval_query(

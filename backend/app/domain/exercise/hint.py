@@ -90,6 +90,25 @@ def render_answer(answer: object) -> str:
     return str(answer)
 
 
+def is_student_answer(answer: object) -> bool:
+    """该值是否是**学生形态**的作答（与 `submit` 的 answer 同形，契约定稿 7）。
+
+    刻意不等于「`render_answer` 非空」：参考答案的形态 `{"language","solution"}`
+    也能渲染出文本，但它不是学生作答 —— 若 hint 收它，就会出现「同一份 body 能问
+    批改、提交判分却必然 4220」的契约分裂（学生以为答了，实际判不了）。
+    数字/布尔等标量同理：没有哪种题型的作答长这样。
+    """
+    if isinstance(answer, str):
+        return bool(answer.strip())
+    if isinstance(answer, list):
+        return any(isinstance(item, str) and item.strip() for item in answer)
+    if isinstance(answer, dict):
+        # 学生编程题只交 source；带 solution 的是题库参考答案，不接受
+        source = answer.get("source")
+        return isinstance(source, str) and bool(source.strip())
+    return False
+
+
 def build_hint_question(
     *,
     intent: str,
