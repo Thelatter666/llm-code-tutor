@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useAuthStore } from '@/stores/auth'
-import { Document, ChatDotRound, EditPen, MagicStick, Search } from '@element-plus/icons-vue'
+import { Document, ChatDotRound, EditPen, MagicStick, Search, Reading, Notebook } from '@element-plus/icons-vue'
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -20,6 +20,8 @@ const NAV: NavItem[] = [
   { path: '/code', label: '代码解析辅导', icon: MagicStick },
   { path: '/editor', label: '在线代码编辑器', icon: EditPen },
   { path: '/knowledge', label: '知识库检索', icon: Search },
+  { path: '/exercises', label: '习题练习', icon: Reading },
+  { path: '/mistakes', label: '错题本', icon: Notebook },
   { path: '/admin/knowledge', label: '知识库管理', icon: Document, adminOnly: true },
 ]
 

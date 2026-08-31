@@ -6,8 +6,10 @@ Fake 比 Mock 更合适：它们是**有状态的、行为正确的**端口实�
 
 import asyncio
 import itertools
+import time
 
 from app.infrastructure.llm_runtime import LLM_LEVEL_PRIMARY, LLMRuntime
+from app.infrastructure.ports.code_executor import ExecutionResult
 from app.infrastructure.ports.llm import (
     ChatMessage,
     Completion,
@@ -262,3 +264,111 @@ _counter = itertools.count()
 
 def next_id(prefix: str = "id") -> str:
     return f"{prefix}-{next(_counter)}"
+
+
+class FakeExecutor:
+    """代码执行器替身（CONTEXT.md「代码执行器 CodeExecutor」）。
+
+    与 FakeLLM 同一设计哲学：**有状态的、行为正确的**端口实现 —— 默认按
+    source 内容给出与 `SubprocessCodeExecutor` 同语义的结果（契约测试据此
+    同组断言）；服务层测试用 `results` 脚本逐用例指定结果、用 `delay_s`
+    注入真实耗时驱动 15s 累计预算。
+
+    行为映射（默认模式，仅覆盖契约测试需要的四个语义分支）：
+    - source 含 `os.system` → `blocked`（黑名单先于执行）
+    - source 含 `raise` → `runtime_error`
+    - source 含 `input()` → 回显 stdin（判题用例输入靠 stdin 透传）
+    - 其余 → `accepted`，stdout 回显 `print(...)` 的字面量
+    """
+
+    def __init__(
+        self,
+        *,
+        results: list[ExecutionResult] | None = None,
+        delay_s: float = 0.0,
+    ) -> None:
+        self._script = list(results) if results is not None else None
+        self._delay = delay_s
+        self.calls: list[dict] = []
+
+    def execute(self, *, language: str, source: str, stdin: str = "") -> ExecutionResult:
+        self.calls.append({"language": language, "source": source, "stdin": stdin})
+        if self._delay:
+            time.sleep(self._delay)
+        if self._script is not None:
+            if not self._script:
+                raise AssertionError("FakeExecutor 结果脚本已耗尽")
+            return self._script.pop(0)
+        return self._simulate(language, source, stdin)
+
+    # ------------------------------------------------------------ 内部实现
+
+    @staticmethod
+    def _detail(executed: bool) -> dict:
+        """契约要求 limit_detail 携带全部限制层键（值是占位，契约测键不测值）。"""
+        return {
+            "executed": executed,
+            "wall_clock": {"limit_s": 5, "elapsed_s": 0.0, "triggered": False},
+            "cpu": {"limit_s": 3, "applied": executed, "error": None, "triggered": False},
+            "memory": {"limit_bytes": 268435456, "sampled": executed, "triggered": False},
+            "file_size": {"limit_bytes": 1048576, "applied": executed, "error": None},
+            "output": {"limit_bytes": 8192, "stdout_bytes": 0, "stderr_bytes": 0},
+        }
+
+    @classmethod
+    def _simulate(cls, language: str, source: str, stdin: str) -> ExecutionResult:
+        if "os.system" in source:
+            return ExecutionResult(
+                status="blocked",
+                stdout="",
+                stderr="命中黑名单规则：os.system；代码未执行。",
+                exit_code=None,
+                duration_ms=0,
+                limit_detail=cls._detail(executed=False),
+            )
+        if "raise " in source:
+            return ExecutionResult(
+                status="runtime_error",
+                stdout="",
+                stderr="ValueError: boom",
+                exit_code=1,
+                duration_ms=1,
+                limit_detail=cls._detail(executed=True),
+            )
+        if "input(" in source:
+            return ExecutionResult(
+                status="accepted",
+                stdout=f"hi {stdin}\n",
+                stderr="",
+                exit_code=0,
+                duration_ms=1,
+                limit_detail=cls._detail(executed=True),
+            )
+        stdout = "ok\n" if "print(" in source else ""
+        return ExecutionResult(
+            status="accepted",
+            stdout=stdout,
+            stderr="",
+            exit_code=0,
+            duration_ms=1,
+            limit_detail=cls._detail(executed=True),
+        )
+
+
+def execution_result(
+    *,
+    status: str = "accepted",
+    stdout: str = "",
+    stderr: str = "",
+    exit_code: int | None = 0,
+    duration_ms: int = 1,
+) -> ExecutionResult:
+    """构造判题脚本用的 ExecutionResult；limit_detail 带契约要求的层键。"""
+    return ExecutionResult(
+        status=status,
+        stdout=stdout,
+        stderr=stderr,
+        exit_code=exit_code,
+        duration_ms=duration_ms,
+        limit_detail=FakeExecutor._detail(executed=status != "blocked"),
+    )

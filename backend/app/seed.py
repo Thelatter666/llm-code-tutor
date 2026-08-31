@@ -1,38 +1,20 @@
+"""`python -m app.seed` 的 CLI 薄壳（P5 Task 12：种子本体迁入 `backend/seeds/` 包）。
+
+留在本文件的只有两件事：**入口**（建库 + 开会话 + 打印）与**兼容再导出**
+（`from app.seed import seed, DEFAULT_ADMIN_USERNAME` 是既有测试与运维脚本用的
+名字，不得因迁移而破坏）。种子的内容与幂等规则全在 `seeds/` 包里。
+"""
+
 import asyncio
 from pathlib import Path
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.core.config import get_settings
-from app.core.security import hash_password
-from app.domain.auth.user import ACTIVE, ADMIN
 from app.infrastructure.persistence.db import SessionFactory, engine, init_db
-from app.infrastructure.persistence.models import User
-from app.infrastructure.registry import get_or_create_singleton
 
-DEFAULT_ADMIN_USERNAME = "admin"
-DEFAULT_ADMIN_PASSWORD = "Admin@12345"
+# 兼容再导出：迁移后 `app.seed.seed` / 默认管理员常量仍然可导入（遗留 M2）
+from seeds import DEFAULT_ADMIN_PASSWORD, DEFAULT_ADMIN_USERNAME, seed
 
-
-async def seed(session: AsyncSession) -> None:
-    """幂等：已存在则跳过，不覆盖既有数据。"""
-    existing = (
-        await session.execute(select(User).where(User.username == DEFAULT_ADMIN_USERNAME))
-    ).scalar_one_or_none()
-    if existing is None:
-        session.add(
-            User(
-                username=DEFAULT_ADMIN_USERNAME,
-                email="admin@example.com",
-                hashed_password=hash_password(DEFAULT_ADMIN_PASSWORD),
-                role=ADMIN,
-                status=ACTIVE,
-            )
-        )
-
-    await get_or_create_singleton(session)
-    await session.flush()
+__all__ = ["DEFAULT_ADMIN_PASSWORD", "DEFAULT_ADMIN_USERNAME", "seed"]
 
 
 async def _main() -> None:

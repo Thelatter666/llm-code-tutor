@@ -17,8 +17,9 @@ from app.infrastructure.runtime import (
     refresh_embedder_config,
     refresh_llm_config,
 )
-from app.routers import admin_knowledge, admin_model_config, admin_stats, chat, code, knowledge
+from app.routers import admin_exercise, admin_knowledge, admin_model_config, admin_stats, chat, code, exercise, knowledge
 from app.routers import auth as auth_router
+from app.routers import mistake
 from app.services.model_config_service import ModelConfigService
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,9 @@ app.include_router(auth_router.router)
 app.include_router(chat.router)
 app.include_router(knowledge.router)
 app.include_router(code.router)
+app.include_router(exercise.router)
+app.include_router(mistake.router)
+app.include_router(admin_exercise.router)
 app.include_router(admin_knowledge.router)
 app.include_router(admin_model_config.router)
 app.include_router(admin_stats.router)

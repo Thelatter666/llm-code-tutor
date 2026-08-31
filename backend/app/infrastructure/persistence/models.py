@@ -2,7 +2,7 @@
 
 P0 落 User / ModelConfig / AuditLog；P1 追加 KnowledgeBase / Document / Chunk；
 P2 追加 Conversation / Message；P3 追加 CodeAnalysis；
-P4 追加 CodeSession / CodeRun。
+P4 追加 CodeSession / CodeRun；P5 追加 Exercise / Submission / MistakeBookEntry。
 建表走 create_all，不做迁移（ADR-0006）。
 """
 
@@ -13,6 +13,7 @@ from sqlalchemy import JSON, Boolean, Float, Integer, String, Text, UniqueConstr
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.domain.chat.policy import DEFAULT_CONVERSATION_TITLE
+from app.domain.exercise.judging import STATUS_DRAFT
 from app.domain.knowledge.status import DOC_PENDING, KB_READY
 from app.infrastructure.persistence.db import UTCDateTime, Base
 
@@ -253,3 +254,78 @@ class CodeRun(Base):
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
     limit_detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_now, index=True)
+
+
+class Exercise(Base):
+    """习题：题库中的一道题目，含题干、答案与知识点标签（CONTEXT.md）。
+
+    不使用「题目」「试题」称之。answer / test_cases 的各题型 JSON 形态契约
+    见 P5 计划「契约定稿 7」（spec §5 只写了 JSON，P5 回写时补形态）。
+
+    `answer` 对 choice/multi 存选项键（"B" / ["A","C"]），学生提交与判分共用
+    同一形态；`options` 用键值对象（{"A": 文本}）而非数组，判分比对键名即可，
+    无需下标换算。
+    """
+
+    __tablename__ = "exercises"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    type: Mapped[str] = mapped_column(String)  # choice | multi | blank | short | coding
+    stem: Mapped[str] = mapped_column(Text)
+    # choice / multi 需要，其余题型为 null
+    options: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    answer: Mapped[dict | list | str] = mapped_column(JSON)
+    # coding 专用：{"language": "python", "cases": [{"stdin", "expected_stdout"}]}
+    test_cases: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    explanation: Mapped[str] = mapped_column(Text, default="")
+    knowledge_tags: Mapped[list] = mapped_column(JSON, default=list)
+    difficulty: Mapped[int] = mapped_column(Integer)  # 1-5，入参校验拒绝越界
+    source: Mapped[str] = mapped_column(String)  # seed | admin | ai
+    # 学生端列表/详情只暴露 published（spec §6.2）
+    status: Mapped[str] = mapped_column(String, default=STATUS_DRAFT, index=True)
+    created_by: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_now, index=True)
+
+
+class Submission(Base):
+    """提交：学生对某道习题的一次作答记录（CONTEXT.md）。
+
+    与「答案」区分：答案（Exercise.answer）是一个字段，提交是实体。
+    `is_correct` 按 spec §5 为 bool?（可空列）；判分四路总会落定它，
+    可空性保留给 spec 原文。`attempt_no` 从 1 递增（同一学生同一习题）。
+    """
+
+    __tablename__ = "submissions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    exercise_id: Mapped[str] = mapped_column(String, index=True)
+    answer: Mapped[dict | list | str] = mapped_column(JSON)
+    is_correct: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    score: Mapped[int] = mapped_column(Integer)  # 0-100
+    judge_detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    feedback: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempt_no: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_now, index=True)
+
+
+class MistakeBookEntry(Base):
+    """错题条目：学生在某道习题上的错误累积状态，按 (user, exercise) 唯一。
+
+    不使用「错题」作为实体名；「错题本」是功能名（CONTEXT.md）。掌握度
+    Mastery 的演进规则在 `domain/exercise/mastery.py`（spec §8.5），本表只
+    存状态：错误时硬回滚（mastered=false、mastered_at=null）是硬要求。
+    """
+
+    __tablename__ = "mistake_book_entries"
+    __table_args__ = (UniqueConstraint("user_id", "exercise_id"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    exercise_id: Mapped[str] = mapped_column(String, index=True)
+    wrong_count: Mapped[int] = mapped_column(Integer, default=0)
+    consecutive_correct: Mapped[int] = mapped_column(Integer, default=0)
+    last_wrong_answer: Mapped[dict | list | str | None] = mapped_column(JSON, nullable=True)
+    last_wrong_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    mastered: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    mastered_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)

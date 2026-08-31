@@ -31,6 +31,16 @@ const router = createRouter({
           component: () => import('@/views/student/KnowledgeSearchView.vue'),
         },
         {
+          // 习题练习：判分四路与 hint 双意图辅导（spec §5.1 / §6.2 / §7.1）
+          path: 'exercises',
+          component: () => import('@/views/student/ExerciseView.vue'),
+        },
+        {
+          // 错题本：掌握状态、薄弱画像与定向推荐（spec §8.5）
+          path: 'mistakes',
+          component: () => import('@/views/student/MistakeBookView.vue'),
+        },
+        {
           path: 'admin/knowledge',
           component: () => import('@/views/admin/KnowledgeAdminView.vue'),
           meta: { requiresAdmin: true },
