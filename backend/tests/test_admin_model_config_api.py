@@ -315,3 +315,44 @@ async def test_put_hot_reload_takes_effect_without_restart(client, factory):
     assert snap.provider == "mock"
     assert snap.degraded is True
     assert snap.fallback_reason == "llm_fallback_to_mock"
+
+
+# ------------------------------------------------------------ POST /model-config/test
+
+
+@pytest.mark.asyncio
+async def test_model_config_test_requires_admin(client, factory):
+    token = await _register(client, "stu2")
+    r = await client.post("/api/v1/admin/model-config/test", headers=_auth(token))
+    assert r.json()["code"] == 4030
+
+
+@pytest.mark.asyncio
+async def test_model_config_test_mock_config_ok(client, factory):
+    """Mock 配置是既定路径（spec §9），返回 ok=true 且 sample 非空。"""
+    token = await _admin_token(client, factory)
+    r = await client.post("/api/v1/admin/model-config/test", headers=_auth(token))
+    assert r.json()["code"] == 0
+    data = r.json()["data"]
+    assert data["ok"] is True
+    assert data["latency_ms"] >= 0
+    assert isinstance(data["sample"], str) and data["sample"]
+
+
+@pytest.mark.asyncio
+async def test_model_config_test_broken_openai_returns_ok_false(client, factory):
+    """首选级失败 → ok=false 且不抛 5xx（不被运行时降级链伪装成 ok=true）。"""
+    token = await _admin_token(client, factory)
+    await _ensure_singleton_row(factory)
+    async with factory() as s:
+        cfg = (await s.execute(select(ModelConfig))).scalars().one()
+        cfg.provider = "openai_compat"
+        cfg.base_url = "http://127.0.0.1:1/v1"  # 不可达端口，连接立即失败
+        cfg.api_key_encrypted = encrypt_api_key("sk-fake-key-0001")
+        await s.commit()
+
+    r = await client.post("/api/v1/admin/model-config/test", headers=_auth(token))
+    assert r.json()["code"] == 0  # 不是 5xx
+    assert r.json()["data"]["ok"] is False
+    assert r.json()["data"]["latency_ms"] is None
+    assert r.json()["data"]["sample"]

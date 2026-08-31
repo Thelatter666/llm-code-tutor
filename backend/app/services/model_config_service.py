@@ -5,6 +5,7 @@
 """
 
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -22,11 +23,16 @@ from app.infrastructure.adapters.embedding.sentence_transformer import (
 )
 from app.infrastructure.embedder_runtime import EmbedderRuntime
 from app.infrastructure.persistence.models import Chunk, KnowledgeBase, ModelConfig
+from app.infrastructure.llm_runtime import LLM_LEVEL_MOCK, LLM_LEVEL_PRIMARY
+from app.infrastructure.ports.llm import ChatMessage
 from app.infrastructure.registry import (
     EMBEDDING_PROVIDER_HASHING,
     EMBEDDING_PROVIDER_OPENAI,
     LLM_PROVIDER_OPENAI,
+    build_llm,
     get_or_create_singleton,
+    llm_config,
+    llm_params,
 )
 from app.infrastructure.runtime import get_embedder_runtime, refresh_embedder_config
 from app.services.audit_service import AuditService
@@ -132,6 +138,44 @@ class ModelConfigService:
             request_id=request_id,
         )
         return cfg
+
+    async def test_llm_connection(self) -> dict:
+        """配置连通性测试（spec §6.2，P6 Task 4）。
+
+        裁定 2（2026-08-31）：只测**已保存配置**，不接受覆盖参数 —— 前端
+        「先保存再测试」。
+
+        只测**首选级**提供方：走 `build_llm(cfg, LLM_LEVEL_PRIMARY)` 直接调用，
+        不经运行时降级链 —— 否则坏掉的 openai 配置会静默降级到 Mock 返回
+        ok=True，把「配置错误」伪装成「一切正常」。Mock 配置时首选即 Mock，
+        返回 ok=True（无 API Key 全链路可用是既定路径，spec §9）。
+
+        失败不抛异常：返回 `{ok: false, latency_ms: null, sample: 错误说明}`，
+        管理页可展示，不打爆全局异常码。
+        """
+        cfg = await get_or_create_singleton(self._session)
+        llm_cfg = llm_config(cfg)
+        params = llm_params(llm_cfg)
+        provider = build_llm(llm_cfg, LLM_LEVEL_PRIMARY) or build_llm(
+            llm_cfg, LLM_LEVEL_MOCK
+        )
+        started = time.monotonic()
+        try:
+            completion = await provider.complete(
+                [ChatMessage(role="user", content="ping")], params
+            )
+        except Exception as exc:  # noqa: BLE001 - 测试端点要吃掉一切失败并回 ok=false
+            return {
+                "ok": False,
+                "latency_ms": None,
+                "sample": f"{type(exc).__name__}: {exc}",
+            }
+        latency_ms = int((time.monotonic() - started) * 1000)
+        return {
+            "ok": True,
+            "latency_ms": latency_ms,
+            "sample": completion.text[:200],
+        }
 
     async def switch_embedding_with_rebuild(
         self,

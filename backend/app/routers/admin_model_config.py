@@ -80,6 +80,17 @@ async def put_model_config(
     return ok(_model_config_out(cfg), request_id=rid)
 
 
+@router.post("/model-config/test")
+async def test_model_config(session: SessionDep, rid: CurrentRidDep, user: AdminDep):
+    """测试**已保存配置**的连通性（裁定 2：不接受覆盖参数，前端先保存再测试）。
+
+    返回 `{ok, latency_ms, sample}`；失败返回 ok=false 且**不抛 5xx**
+    （配置测试的失败是业务结果，不是服务故障）。
+    """
+    result = await ModelConfigService(session).test_llm_connection()
+    return ok(result, request_id=rid)
+
+
 @router.put("/model-config/embedding")
 async def update_embedding(
     body: EmbeddingConfigIn,
