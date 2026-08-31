@@ -1,14 +1,16 @@
 """exercise / mistake 端点出入参（spec §6.2 exercise 与 mistake 行）。
 
-Task 1 先落基础模型；跨题型写入校验（options/answer 键匹配、coding 必带
-test_cases）与 admin CRUD 模型在对应任务补全。
+Task 1 落基础模型；mistake 视图在 Task 9 补；跨题型写入校验（options/answer 键
+匹配、coding 必带 test_cases）与 admin CRUD 模型在 Task 11 补全。
 """
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.domain.chat.policy import REVIEW_MY_CODE
+from app.domain.exercise.hint import render_answer
 from app.domain.exercise.judging import EXERCISE_TYPES
 
 STEM_MAX = 2000
@@ -93,6 +95,24 @@ class ExerciseDetail(BaseModel):
 
 class SubmitIn(BaseModel):
     answer: Any = None
+
+
+class HintIn(BaseModel):
+    """hint 请求体（契约定稿 3）：`{intent, answer?}`。
+
+    `intent` 是**显式契约而非推断**（ADR-0005）：只接受两种学生可见意图，`judging`
+    是内部判分意图、不对 HTTP 开放 —— 它落在 `Literal` 之外，传入即 422。
+    `answer` 与 submit 同形；`review_my_code` 必填，否则「批改我的作答」无物可批改。
+    """
+
+    intent: Literal["seek_answer", "review_my_code"]
+    answer: Any = None
+
+    @model_validator(mode="after")
+    def _review_requires_answer(self) -> "HintIn":
+        if self.intent == REVIEW_MY_CODE and not render_answer(self.answer).strip():
+            raise ValueError("批改我的作答需要同时提交当前作答内容 answer")
+        return self
 
 
 class SubmitOut(BaseModel):

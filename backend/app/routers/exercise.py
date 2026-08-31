@@ -1,21 +1,27 @@
 """学生端习题端点（spec §6.2 exercise 行）。
 
-hint 端点在 Task 10 追加（SSE）。路由不含业务逻辑，判分与编排都在
-`ExerciseService`。学生视图不含 answer / explanation / test_cases —— 揭示
-只发生在提交之后（`SubmitOut`）。
+路由不含业务逻辑，判分与编排在 `ExerciseService`。学生视图不含 answer /
+explanation / test_cases —— 揭示只发生在提交之后（`SubmitOut`）。
+
+`POST /exercises/{id}/hint` 是 SSE 端点（Task 10），事件契约见 spec §6.1。
+**本端点没有配套的 /stop**：中断由前端 `AbortController` 断连承担（裁定 10），
+服务端保留 per-call cancel Event 与 4990 语义，与 chat 同构。
 """
 
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 
 from app.core.deps import CurrentRidDep, SessionDep, get_current_user
 from app.core.responses import ok
 from app.domain.exercise.judging import EXERCISE_TYPES
 from app.infrastructure.persistence.models import User
+from app.infrastructure.sse import format_sse
 from app.schemas.exercise import (
     ExerciseDetail,
     ExerciseListItem,
+    HintIn,
     SubmitIn,
     SubmitOut,
 )
@@ -97,4 +103,42 @@ async def submit_exercise(
             ai_scored=bool((row.judge_detail or {}).get("ai_scored")),
         ).model_dump(),
         request_id=rid,
+    )
+
+
+@router.post("/{exercise_id}/hint")
+async def stream_hint(
+    exercise_id: str,
+    body: HintIn,
+    session: SessionDep,
+    rid: CurrentRidDep,
+    user: UserDep,
+):
+    """习题 AI 辅导（SSE，spec §6.1 / §6.2）。
+
+    `intent` 由前端入口按钮**显式传入**（ADR-0005）：「获取思路」= `seek_answer`
+    受防抄袭档位约束；「批改我的作答」= `review_my_code` 豁免档位（不豁免底线）。
+
+    published 校验在返回 `StreamingResponse` **之前**完成（chat 同构）—— 否则
+    HTTP 200 已发出，「不存在或未发布」只能靠流里的 error 事件表达，前端与日志
+    都更难处理。
+    """
+    svc = ExerciseService(session)
+    await svc.get_published(exercise_id)
+
+    async def _events():
+        async for event in svc.stream_hint(
+            exercise_id=exercise_id,
+            user_id=user.id,
+            intent=body.intent,
+            answer=body.answer,
+            request_id=rid,
+        ):
+            yield format_sse(event)
+
+    return StreamingResponse(
+        _events(),
+        media_type="text/event-stream",
+        # X-Accel-Buffering：经反代时不得缓冲，否则流式退化成一次性返回
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

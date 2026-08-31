@@ -14,11 +14,15 @@
 3. `attempt_no` 递增 → 落 Submission → `is_correct == false` 即入错题本
 4. 写 `AuditLog(action="exercise_submit")`
 
-hint 的 AI 辅导链路在 Task 10 追加（`stream_hint`）。
+`stream_hint()` 是习题辅导的 AI 链路（spec §6.1 / §7.1 / §7.2，Task 10）：复用
+chat 的 SSE 全套模式 —— citation 先行、per-call 中断 Event、`finally` 注销与审计。
+**不落 Message / Submission**：hint 不是提交，spec §5 无对应实体，错题归集只由
+判分驱动。
 """
 
 import logging
 import time
+from dataclasses import asdict
 from datetime import UTC, datetime
 
 from fastapi.concurrency import run_in_threadpool
@@ -26,7 +30,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ApiError
+from app.domain.chat.policy import detect_floor_violation, resolve_mode
 from app.domain.code.execution import STATUS_ACCEPTED
+from app.domain.exercise.hint import (
+    build_hint_question,
+    build_retrieval_query,
+    template_for,
+)
 from app.domain.exercise.judging import (
     JUDGING_BUDGET_S,
     METHOD_EXECUTED,
@@ -47,10 +57,12 @@ from app.domain.exercise.short_scoring import (
     mock_short_score,
     parse_judge_json,
 )
+from app.infrastructure.cancellation import get_cancellation_registry
 from app.infrastructure.concurrency import execution_slot
 from app.infrastructure.persistence.models import Exercise, Submission
 from app.infrastructure.ports.code_executor import CodeExecutor, ExecutionResult
-from app.infrastructure.ports.llm import ChatMessage
+from app.infrastructure.ports.llm import ChatMessage, TextDelta, Usage
+from app.infrastructure.prompt_assembler import PromptAssembler
 from app.infrastructure.registry import (
     LLM_PROVIDER_OPENAI,
     get_or_create_singleton,
@@ -62,10 +74,33 @@ from app.infrastructure.runtime import (
     get_llm_runtime,
     refresh_llm_config,
 )
+from app.infrastructure.sse import (
+    CANCELLED_CODE,
+    EVENT_DONE,
+    EVENT_ERROR,
+    EVENT_TOKEN,
+    StreamEvent,
+    citation_event,
+)
 from app.services.audit_service import AuditService
 from app.services.mistake_service import MistakeBookService
+from app.services.retrieval_service import RetrievalService, SearchResult
 
 logger = logging.getLogger(__name__)
+
+
+def _hint_cancel_key(user_id: str, exercise_id: str) -> str:
+    """hint 的中断注册表作用域键。
+
+    计划里写的是 `(exercise_id, request_id)`；这里把作用域收成 **per-user**，
+    因为 `CancellationRegistry.create()` 会先置位同作用域上进行中的流（chat 的
+    语义：同一会话发起新请求时旧流必须停）。会话属于单个用户，所以 chat 用
+    `conversation_id` 当作用域是安全的；而**习题是共享实体** —— 若直接用
+    `exercise_id`，B 同学发起 hint 会静默掐断 A 同学正在生成的辅导流（A 收到
+    4990「已中断生成」）。这是一次跨用户干扰，不是设计意图，故加 `user_id` 前缀。
+    「同一学生同一习题再发起一次 hint → 取消自己上一条」的原意保留。
+    """
+    return f"{user_id}:{exercise_id}"
 
 
 class ExerciseService:
@@ -77,6 +112,9 @@ class ExerciseService:
         llm=None,
         mistakes: MistakeBookService | None = None,
         budget_seconds: float | None = None,
+        retrieval: RetrievalService | None = None,
+        prompts: PromptAssembler | None = None,
+        cancels=None,
     ):
         self._session = session
         # 服务层只依赖端口；执行器不随 ModelConfig revision 变化，注入即生效
@@ -87,6 +125,10 @@ class ExerciseService:
         self._mistakes = mistakes or MistakeBookService(session)
         # 15s 累计预算缺省取领域常量；构造参数仅供测试注入小值（已裁定语义）
         self._budget_seconds = budget_seconds if budget_seconds is not None else JUDGING_BUDGET_S
+        # --- hint 链路（Task 10）：与 ChatService 同一套装配依赖 ---
+        self._retrieval = retrieval or RetrievalService(session)
+        self._prompts = prompts or PromptAssembler()
+        self._cancels = cancels or get_cancellation_registry()
 
     # ------------------------------------------------------------ 查询
 
@@ -347,3 +389,191 @@ class ExerciseService:
                 "feedback": feedback,
             },
         )
+
+    # ------------------------------------------------------------ 习题辅导（hint SSE）
+
+    async def stream_hint(
+        self,
+        *,
+        exercise_id: str,
+        user_id: str,
+        intent: str,
+        request_id: str,
+        answer: object = None,
+    ):
+        """产出 `StreamEvent`：`citation* → token* → done`（或 `error`）。
+
+        与 `ChatService.stream_reply()` 同源，差别只在三处（P5 计划契约定稿 3/4）：
+
+        1. **意图由入口显式传入**（ADR-0005）：`seek_answer` 受档位约束，
+           `review_my_code` 豁免档位 —— 但底线仍由 `_floor.j2` 无条件注入
+        2. **不落任何实体**：hint 既不是提交也不是消息，只写审计
+        3. `done` 载荷以 `exercise_id + intent` 替代 `message_id`
+
+        中断：per-call `asyncio.Event`，注册表作用域键 `f"{user_id}:{exercise_id}"`
+        （对计划「(exercise_id, request_id)」的一处修订，理由见下方 `_hint_cancel_key`）；
+        spec 未定义 hint 的 `/stop` 端点，中断由前端断连（AbortController）承担，
+        流循环里的 cancel 检查与 `4990` 语义保持与 chat 同构。
+        """
+        exercise = await self.get_published(exercise_id)
+        if self._shared_llm:
+            # spec §4.2 硬约束 4：管理员改配置即时生效
+            await refresh_llm_config(self._session)
+        cfg = await get_or_create_singleton(self._session)
+        mode = resolve_mode(intent, cfg.anti_plagiarism_mode)
+        # 契约定稿 13：底线检测的输入是题干（它充当学生的请求文本）。学生作答是
+        # 答案不是请求 —— 与 /code/analyze 不对代码做检测同口径（spec §8.4）
+        floor_hit = detect_floor_violation(exercise.stem)
+        params = llm_params(llm_config(cfg))
+        scope = _hint_cancel_key(user_id, exercise_id)
+        cancel = self._cancels.create(scope, request_id)
+
+        result = SearchResult(rag_hit=False, degraded=False, fallback_reason=None, threshold=0.0)
+        texts: list[str] = []
+        usage: Usage | None = None
+        error: ApiError | None = None
+
+        try:
+            try:
+                # spec §7.2：检索 query 取题干 + 知识点标签，不含学生作答
+                result = await self._retrieval.search(
+                    build_retrieval_query(
+                        stem=exercise.stem, knowledge_tags=exercise.knowledge_tags
+                    )
+                )
+                # spec §6.1：citation 先于 token，前端得以在辅导出现前展示来源
+                for citation in result.citations:
+                    yield citation_event(citation)
+
+                messages = self._prompts.assemble(
+                    template_for(intent),
+                    question=build_hint_question(
+                        intent=intent,
+                        exercise_type=exercise.type,
+                        stem=exercise.stem,
+                        options=exercise.options,
+                        knowledge_tags=exercise.knowledge_tags,
+                        reference_answer=exercise.answer,
+                        explanation=exercise.explanation,
+                        student_answer=answer,
+                    ),
+                    mode=cfg.anti_plagiarism_mode,
+                    intent=intent,
+                    citations=[asdict(c) for c in result.citations],
+                    floor_hit=floor_hit,
+                )
+                async for chunk in self._llm.stream(messages, params, cancel=cancel):
+                    if isinstance(chunk, TextDelta):
+                        texts.append(chunk.text)
+                        yield StreamEvent(EVENT_TOKEN, {"delta": chunk.text})
+                    else:
+                        usage = chunk  # 用量是流的最后一个元素（B1）
+            except ApiError as exc:
+                error = exc
+            except Exception:
+                logger.exception("习题辅导流式生成异常 exercise=%s", exercise_id)
+                error = ApiError(5000, "生成失败，请稍后重试")
+
+            if error is None and cancel.is_set():
+                # spec §6.1：学生主动中断是 4990 不是服务端故障 5021
+                error = ApiError(CANCELLED_CODE, "已中断生成")
+
+            if error is None:
+                yield StreamEvent(
+                    EVENT_DONE,
+                    self._hint_done_payload(
+                        exercise_id=exercise_id,
+                        intent=intent,
+                        usage=usage,
+                        params=params,
+                        result=result,
+                        texts=texts,
+                    ),
+                )
+            else:
+                yield StreamEvent(EVENT_ERROR, {"code": error.code, "message": error.message})
+        finally:
+            self._cancels.discard(scope, request_id)
+            await self._write_hint_audit(
+                user_id=user_id,
+                exercise_id=exercise_id,
+                request_id=request_id,
+                intent=intent,
+                mode=mode,
+                floor_hit=floor_hit,
+                result=result,
+                texts=texts,
+                error=error,
+            )
+
+    def _hint_done_payload(
+        self,
+        *,
+        exercise_id: str,
+        intent: str,
+        usage: Usage | None,
+        params,
+        result: SearchResult,
+        texts: list[str],
+    ) -> dict:
+        """hint 的 `done` 载荷（契约定稿 4）：九个字段，降级与用量语义全保留。"""
+        if usage is None:
+            # 流末没拿到用量（提供方违约）时按估算用量补齐，不让 done 缺字段
+            chars = sum(len(text) for text in texts)
+            usage = Usage(0, chars // 4, chars // 4, estimated=True)
+        snapshot = self._llm.snapshot()
+        return {
+            "exercise_id": exercise_id,
+            "intent": intent,
+            "token_usage": {
+                "prompt_tokens": usage.prompt_tokens,
+                "completion_tokens": usage.completion_tokens,
+                "total_tokens": usage.total_tokens,
+            },
+            "usage_estimated": bool(usage.estimated),
+            "model": params.model,
+            "provider": snapshot.provider,
+            "rag_hit": result.rag_hit,
+            # 检索降级与提供方降级可能同时发生；先报检索的（spec §9，P2 约定）
+            "degraded": result.degraded or snapshot.degraded,
+            "fallback_reason": result.fallback_reason or snapshot.fallback_reason,
+        }
+
+    async def _write_hint_audit(
+        self,
+        *,
+        user_id: str,
+        exercise_id: str,
+        request_id: str,
+        intent: str,
+        mode: str | None,
+        floor_hit: str | None,
+        result: SearchResult,
+        texts: list[str],
+        error: ApiError | None,
+    ) -> None:
+        """`AuditLog(action="exercise_hint")` 在 `finally` 中写（spec §8.1 同构）。
+
+        本方法自身不得抛出 —— 它在异常路径上也会被调用，抛出会掩盖真正的故障。
+        """
+        try:
+            await AuditService(self._session).record(
+                "exercise_hint",
+                user_id=user_id,
+                target_type="exercise",
+                target_id=exercise_id,
+                detail={
+                    "intent": intent,
+                    "mode": mode,
+                    "blocked_by_policy": floor_hit is not None,
+                    "floor_hit": floor_hit,
+                    "rag_hit": result.rag_hit,
+                    "citations": len(result.citations),
+                    "chars": len("".join(texts)),
+                    "error_code": error.code if error else None,
+                },
+                request_id=request_id,
+            )
+            await self._session.commit()
+        except Exception:
+            logger.exception("写入习题辅导审计日志失败 exercise=%s", exercise_id)
