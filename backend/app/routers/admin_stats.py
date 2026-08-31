@@ -16,6 +16,7 @@ from app.core.responses import ok
 from app.infrastructure.persistence.models import AuditLog, User
 from app.services.anti_plagiarism_stats import AntiPlagiarismStatsService
 from app.services.audit_service import AuditService
+from app.services.overview_service import OverviewService
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin·stats"])
 
@@ -84,6 +85,13 @@ async def list_logs(
     return ok(
         {"items": [_log_out(r) for r in items], "total": total}, request_id=rid
     )
+
+
+@router.get("/overview")
+async def overview(session: SessionDep, rid: CurrentRidDep, user: AdminDep):
+    """仪表盘聚合（裁定 3：最小集，实际响应为超集）。"""
+    data = await OverviewService(session).overview()
+    return ok(data, request_id=rid)
 
 
 @router.get("/anti-plagiarism/stats")
