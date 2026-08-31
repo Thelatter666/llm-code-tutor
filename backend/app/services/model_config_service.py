@@ -14,22 +14,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import encrypt_api_key
 from app.core.errors import ApiError
-from app.infrastructure.adapters.embedding.hashing_embed import HashingEmbed
-from app.infrastructure.adapters.embedding.openai_compat_embed import (
-    DEFAULT_OPENAI_EMBED_MODEL,
-)
-from app.infrastructure.adapters.embedding.sentence_transformer import (
-    DEFAULT_LOCAL_EMBED_MODEL,
-)
 from app.infrastructure.embedder_runtime import EmbedderRuntime
-from app.infrastructure.llm_runtime import LLM_LEVEL_MOCK, LLM_LEVEL_PRIMARY
 from app.infrastructure.persistence.models import Chunk, KnowledgeBase, ModelConfig
 from app.infrastructure.ports.llm import ChatMessage
 from app.infrastructure.registry import (
     EMBEDDING_PROVIDER_HASHING,
-    EMBEDDING_PROVIDER_OPENAI,
+    HASHING_EMBED_MODEL,
     LLM_PROVIDER_OPENAI,
-    build_llm,
+    build_primary_llm,
+    default_embedding_model,
     get_or_create_singleton,
     llm_config,
     llm_params,
@@ -145,10 +138,11 @@ class ModelConfigService:
         裁定 2（2026-08-31）：只测**已保存配置**，不接受覆盖参数 —— 前端
         「先保存再测试」。
 
-        只测**首选级**提供方：走 `build_llm(cfg, LLM_LEVEL_PRIMARY)` 直接调用，
+        只测**首选级**提供方：走 `registry.build_primary_llm(cfg)` 直接调用，
         不经运行时降级链 —— 否则坏掉的 openai 配置会静默降级到 Mock 返回
         ok=True，把「配置错误」伪装成「一切正常」。Mock 配置时首选即 Mock，
         返回 ok=True（无 API Key 全链路可用是既定路径，spec §9）。
+        级别编号不出 registry（清理批次裁定 R2 / P6 审阅 L-3）。
 
         失败不抛异常：返回 `{ok: false, latency_ms: null, sample: 错误说明}`，
         管理页可展示，不打爆全局异常码。
@@ -156,9 +150,7 @@ class ModelConfigService:
         cfg = await get_or_create_singleton(self._session)
         llm_cfg = llm_config(cfg)
         params = llm_params(llm_cfg)
-        provider = build_llm(llm_cfg, LLM_LEVEL_PRIMARY) or build_llm(
-            llm_cfg, LLM_LEVEL_MOCK
-        )
+        provider = build_primary_llm(llm_cfg)
         started = time.monotonic()
         try:
             completion = await provider.complete(
@@ -320,7 +312,7 @@ class ModelConfigService:
         管理员显式选 hashing 是唯一例外：那时哨兵就是要的效果，且检索端会以
         `hashing_embed_no_semantics` 显式降级，属于「可见降级」。
         """
-        if provider == EMBEDDING_PROVIDER_HASHING or model == HashingEmbed.model:
+        if provider == EMBEDDING_PROVIDER_HASHING or model == HASHING_EMBED_MODEL:
             return False
         await runtime.warmup()
         current = runtime.current
@@ -406,11 +398,3 @@ class ModelConfigService:
             )
         return warnings
 
-
-def default_embedding_model(provider: str | None) -> str:
-    """未显式配置模型时，各 provider 实际会用的模型（与 registry.build_embedder 对齐）。"""
-    if provider == EMBEDDING_PROVIDER_OPENAI:
-        return DEFAULT_OPENAI_EMBED_MODEL
-    if provider == EMBEDDING_PROVIDER_HASHING:
-        return HashingEmbed.model
-    return DEFAULT_LOCAL_EMBED_MODEL

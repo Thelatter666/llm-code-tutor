@@ -73,3 +73,42 @@ async def test_registry_returns_openai_compat_with_api_key(session):
     provider = await ProviderRegistry().get_llm(session)
     assert provider.name == "openai_compat"
     assert provider._api_key == "sk-real-key-0001"
+
+
+# --- 清理批次 H-3：适配器知识收口在 registry，服务层只拿语义 ---
+
+def test_default_embedding_model_maps_each_provider():
+    """C2 锁：三 provider 的默认模型映射（回退/改坏常量即死）。"""
+    from app.infrastructure.registry import (
+        EMBEDDING_PROVIDER_HASHING,
+        EMBEDDING_PROVIDER_LOCAL,
+        EMBEDDING_PROVIDER_OPENAI,
+        HASHING_EMBED_MODEL,
+        default_embedding_model,
+    )
+
+    assert default_embedding_model(EMBEDDING_PROVIDER_OPENAI) == "text-embedding-3-small"
+    assert default_embedding_model(EMBEDDING_PROVIDER_HASHING) == "hashing-256"
+    assert default_embedding_model(EMBEDDING_PROVIDER_LOCAL) == (
+        "paraphrase-multilingual-MiniLM-L12-v2"
+    )
+    # 未配置/未知 provider → 本地默认（与 build_embedder 的 level 1 对齐）
+    assert default_embedding_model(None) == "paraphrase-multilingual-MiniLM-L12-v2"
+    assert HASHING_EMBED_MODEL == "hashing-256"
+
+
+def test_build_primary_llm_never_uses_fallback_chain():
+    """R2 锁：首选级公开入口对任何配置都给出提供方（openai 无 key → Mock 兜底）。"""
+    from app.infrastructure.adapters.llm.mock_provider import MockLLMProvider
+    from app.infrastructure.adapters.llm.openai_compat import OpenAICompatProvider
+    from app.infrastructure.registry import LLMConfig, build_primary_llm
+
+    assert isinstance(build_primary_llm(LLMConfig()), MockLLMProvider)
+    assert isinstance(
+        build_primary_llm(LLMConfig(provider="openai_compat", api_key="sk-1")),
+        OpenAICompatProvider,
+    )
+    assert isinstance(
+        build_primary_llm(LLMConfig(provider="openai_compat", api_key=None)),
+        MockLLMProvider,
+    )

@@ -35,6 +35,23 @@ EMBEDDING_PROVIDER_HASHING = "hashing"
 LLM_PROVIDER_OPENAI = "openai_compat"
 LLM_PROVIDER_MOCK = "mock"
 
+# 哨兵模型名（ADR-0004）。服务层判定「配置是否指向哨兵」用本常量而非
+# import HashingEmbed —— 适配器知识收口在 registry（spec §4.2 硬约束 2 / H-3）。
+HASHING_EMBED_MODEL = HashingEmbed.model
+
+
+def default_embedding_model(provider: str | None) -> str:
+    """未显式配置模型时，各 provider 实际会用的模型（与 `build_embedder` 对齐）。
+
+    清理批次 H-3：自 `model_config_service` 上移至本层 —— 旧模型名比对与一致性
+    告警需要它，但它绑定的是具体适配器常量，服务层不该 import 适配器。
+    """
+    if provider == EMBEDDING_PROVIDER_OPENAI:
+        return DEFAULT_OPENAI_EMBED_MODEL
+    if provider == EMBEDDING_PROVIDER_HASHING:
+        return HASHING_EMBED_MODEL
+    return DEFAULT_LOCAL_EMBED_MODEL
+
 
 async def get_or_create_singleton(session: AsyncSession) -> ModelConfig:
     """ModelConfig 为单例记录（spec §5）。
@@ -209,6 +226,18 @@ def build_llm(cfg: LLMConfig, level: int) -> LLMPort | None:
 def make_llm_factory(cfg: LLMConfig):
     """把配置快照绑定成 LLMRuntime 需要的 factory(level) -> LLMPort | None。"""
     return lambda level: build_llm(cfg, level)
+
+
+def build_primary_llm(cfg: LLMConfig) -> LLMPort:
+    """按配置构建**首选级**提供方（不经运行时降级链）。
+
+    唯一公开入口是这里而非 `build_llm` + 级别编号：级别编号（PRIMARY/MOCK）是
+    registry/runtime 的内部知识，服务层拿它做「只测首选级」属越级感知
+    （P6 审阅 L-3 / 清理批次裁定 R2）。`/admin/model-config/test` 用本函数 ——
+    坏配置不经降级链伪装成 ok=True；provider=openai_compat 无 key 时首选级
+    本就返回 Mock（`build_llm` 的 §9 落点），而该组合在 PUT 保存时已被 4220 拒绝。
+    """
+    return build_llm(cfg, LLM_LEVEL_PRIMARY) or build_llm(cfg, LLM_LEVEL_MOCK)
 
 
 def llm_params(cfg: LLMConfig) -> LLMParams:
