@@ -291,6 +291,13 @@ async def test_put_hot_reload_takes_effect_without_restart(client, factory):
     reset_runtime()
     token = await _admin_token(client, factory)
 
+    # 先建立运行时基线（_llm_revision 固定为当前 revision）：
+    # 若不预绑定，变异「PUT 不 bump revision」会被 reset_runtime 产生的
+    # _llm_revision=None 初始态掩盖（None != revision → 照样重绑）。
+    async with factory() as s:
+        baseline = await refresh_llm_config(s)
+    assert baseline is True
+
     r = await client.put(
         "/api/v1/admin/model-config",
         headers=_auth(token),
