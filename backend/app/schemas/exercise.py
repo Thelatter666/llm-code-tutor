@@ -12,16 +12,25 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.domain.chat.policy import REVIEW_MY_CODE
 from app.domain.exercise.hint import render_answer
 from app.domain.exercise.judging import EXERCISE_TYPES
+from app.domain.exercise.shapes import check_exercise_shape
 
 STEM_MAX = 2000
 EXPLANATION_MAX = 4000
 OPTION_MAX = 500
 
+_TYPE_PATTERN = f"^({'|'.join(EXERCISE_TYPES)})$"
+_STATUS_PATTERN = "^(draft|published)$"
+
 
 class ExerciseIn(BaseModel):
-    """习题写入入参；`difficulty` 1-5 与题型枚举在此拒绝（spec §5）。"""
+    """习题写入入参；`difficulty` 1-5 与题型枚举在此拒绝（spec §5）。
 
-    type: str = Field(pattern=f"^({'|'.join(EXERCISE_TYPES)})$")
+    跨题型形状校验（契约定稿 7）：choice/multi 必带 options 且答案键 ⊆ options，
+    coding 必带 `test_cases.language` + 非空 cases。规则本体在领域层
+    `domain/exercise/shapes.py`，种子（Task 13）复用同一份。
+    """
+
+    type: str = Field(pattern=_TYPE_PATTERN)
     stem: str = Field(min_length=1, max_length=STEM_MAX)
     options: dict[str, str] | None = None
     answer: Any = None
@@ -29,7 +38,49 @@ class ExerciseIn(BaseModel):
     explanation: str = Field(default="", max_length=EXPLANATION_MAX)
     knowledge_tags: list[str] = Field(default_factory=list)
     difficulty: int = Field(ge=1, le=5)
-    status: str = Field(default="draft", pattern="^(draft|published)$")
+    status: str = Field(default="draft", pattern=_STATUS_PATTERN)
+
+    @model_validator(mode="after")
+    def _cross_type_shape(self) -> "ExerciseIn":
+        problems = check_exercise_shape(
+            type=self.type,
+            options=self.options,
+            answer=self.answer,
+            test_cases=self.test_cases,
+        )
+        if problems:
+            raise ValueError("；".join(problems))
+        return self
+
+
+class ExercisePatch(BaseModel):
+    """admin 更新入参：全部字段可选，**schema 外字段（含 `source`）一律 422**。
+
+    `extra="forbid"` 是裁定 1 的修订：静默忽略未知字段属「看起来成功、实际没生效」
+    的静默型失败。`source` 刻意不在字段表里 —— 它记录习题来历（seed/admin/ai），
+    改它等于伪造历史。
+
+    跨题型一致性由服务层在**合并后**校验（只改 answer 时也要与库里的 options 配套），
+    这里不重复校验：合并前的局部字段无法判断形状。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: str | None = Field(default=None, pattern=_TYPE_PATTERN)
+    stem: str | None = Field(default=None, min_length=1, max_length=STEM_MAX)
+    options: dict[str, str] | None = None
+    answer: Any = None
+    test_cases: dict | None = None
+    explanation: str | None = Field(default=None, max_length=EXPLANATION_MAX)
+    knowledge_tags: list[str] | None = None
+    difficulty: int | None = Field(default=None, ge=1, le=5)
+    status: str | None = Field(default=None, pattern=_STATUS_PATTERN)
+
+    @model_validator(mode="after")
+    def _requires_something_to_change(self) -> "ExercisePatch":
+        if not self.model_fields_set:
+            raise ValueError("PATCH 至少需要一个待更新字段")
+        return self
 
 
 class ExerciseOut(BaseModel):

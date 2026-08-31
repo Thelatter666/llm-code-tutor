@@ -137,13 +137,18 @@ async def test_no_foreign_keys_on_new_tables(session):
 
 
 def test_difficulty_schema_rejects_out_of_range():
-    """difficulty 1-5 的边界在 Pydantic 入参拒绝（spec §5），DB 层不设防。"""
+    """difficulty 1-5 的边界在 Pydantic 入参拒绝（spec §5），DB 层不设防。
+
+    P5 Task 11 起 choice 必须带 options 才构成合法入参 —— 三条构造都补齐形状，
+    否则前两条会因「缺 options」而失败，本用例就锁不住 difficulty 边界了。
+    """
     from app.schemas.exercise import ExerciseIn
 
     with pytest.raises(ValidationError):
         ExerciseIn(
             type="choice",
             stem="题干",
+            options={"A": "1", "B": "2"},
             answer="A",
             knowledge_tags=["变量与赋值"],
             difficulty=0,
@@ -152,6 +157,7 @@ def test_difficulty_schema_rejects_out_of_range():
         ExerciseIn(
             type="choice",
             stem="题干",
+            options={"A": "1", "B": "2"},
             answer="A",
             knowledge_tags=["变量与赋值"],
             difficulty=6,
@@ -159,6 +165,7 @@ def test_difficulty_schema_rejects_out_of_range():
     ok_in = ExerciseIn(
         type="choice",
         stem="题干",
+        options={"A": "1", "B": "2"},
         answer="A",
         knowledge_tags=["变量与赋值"],
         difficulty=3,

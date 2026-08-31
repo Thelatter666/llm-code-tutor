@@ -26,7 +26,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 
 from fastapi.concurrency import run_in_threadpool
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ApiError
@@ -40,6 +40,7 @@ from app.domain.exercise.hint import (
 from app.domain.exercise.judging import (
     JUDGING_BUDGET_S,
     METHOD_EXECUTED,
+    SOURCE_ADMIN,
     TYPE_BLANK,
     TYPE_CODING,
     TYPE_MULTI,
@@ -50,6 +51,7 @@ from app.domain.exercise.judging import (
     judge_coding,
     judge_multi,
 )
+from app.domain.exercise.shapes import check_exercise_shape
 from app.domain.exercise.short_scoring import (
     SHORT_JUDGE_SYSTEM_PROMPT,
     ShortJudgeParseError,
@@ -59,7 +61,11 @@ from app.domain.exercise.short_scoring import (
 )
 from app.infrastructure.cancellation import get_cancellation_registry
 from app.infrastructure.concurrency import execution_slot
-from app.infrastructure.persistence.models import Exercise, Submission
+from app.infrastructure.persistence.models import (
+    Exercise,
+    MistakeBookEntry,
+    Submission,
+)
 from app.infrastructure.ports.code_executor import CodeExecutor, ExecutionResult
 from app.infrastructure.ports.llm import ChatMessage, TextDelta, Usage
 from app.infrastructure.prompt_assembler import PromptAssembler
@@ -389,6 +395,173 @@ class ExerciseService:
                 "feedback": feedback,
             },
         )
+
+    # ------------------------------------------------------------ 管理端 CRUD
+
+    async def get_any(self, exercise_id: str) -> Exercise:
+        """管理端取习题：含 draft（学生端只认 published）。不存在 → `4040`。"""
+        row = await self._session.get(Exercise, exercise_id)
+        if row is None:
+            raise ApiError(4040, "习题不存在")
+        return row
+
+    async def list_all(
+        self,
+        *,
+        type: str | None = None,
+        difficulty: int | None = None,
+        knowledge_tag: str | None = None,
+        status: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[Exercise], int]:
+        """管理端列表：含 draft，可按题型/难度/标签/状态过滤（spec §6.2 分页约定）。"""
+        stmt = select(Exercise)
+        if type:
+            stmt = stmt.where(Exercise.type == type)
+        if difficulty:
+            stmt = stmt.where(Exercise.difficulty == difficulty)
+        if status:
+            stmt = stmt.where(Exercise.status == status)
+        rows = list(
+            (
+                await self._session.execute(
+                    stmt.order_by(Exercise.difficulty, Exercise.created_at, Exercise.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if knowledge_tag:
+            # knowledge_tags 是 JSON 列，Python 层过滤（spec §3.2 权衡 3）
+            rows = [row for row in rows if knowledge_tag in (row.knowledge_tags or [])]
+        total = len(rows)
+        start = (page - 1) * page_size
+        return rows[start : start + page_size], total
+
+    async def create(
+        self,
+        *,
+        type: str,
+        stem: str,
+        answer: object,
+        difficulty: int,
+        options: dict | None = None,
+        test_cases: dict | None = None,
+        explanation: str = "",
+        knowledge_tags: list[str] | None = None,
+        status: str = "draft",
+        admin_id: str,
+        request_id: str,
+    ) -> Exercise:
+        """新建习题。`source` 由服务端写死为 `admin`（契约定稿 1），
+        `created_by` 取当前管理员 —— 两者都不由请求体决定。"""
+        row = Exercise(
+            type=type,
+            stem=stem,
+            options=options,
+            answer=answer,
+            test_cases=test_cases,
+            explanation=explanation,
+            knowledge_tags=knowledge_tags or [],
+            difficulty=difficulty,
+            status=status,
+            source=SOURCE_ADMIN,
+            created_by=admin_id,
+        )
+        self._session.add(row)
+        await self._session.flush()
+        await AuditService(self._session).record(
+            "admin_exercise_create",
+            user_id=admin_id,
+            target_type="exercise",
+            target_id=row.id,
+            detail={"type": row.type, "status": row.status, "difficulty": row.difficulty},
+            request_id=request_id,
+        )
+        return row
+
+    async def update(
+        self, exercise_id: str, *, fields: dict, admin_id: str, request_id: str
+    ) -> Exercise:
+        """按字段更新（含 status 发布/下架）。
+
+        跨题型形状在**合并后**校验：只改 `answer` 时也要与库里的 `options` 配套，
+        否则一次局部 PATCH 就能造出一道判不了分的习题。校验失败抛 `4220`（HTTP 422）
+        且**不落任何改动**。
+        """
+        row = await self.get_any(exercise_id)
+        if not fields:
+            raise ApiError(4220, "PATCH 至少需要一个待更新字段")
+
+        merged = {
+            "type": row.type,
+            "options": row.options,
+            "answer": row.answer,
+            "test_cases": row.test_cases,
+        }
+        merged.update(fields)
+        problems = check_exercise_shape(
+            type=merged["type"],
+            options=merged["options"],
+            answer=merged["answer"],
+            test_cases=merged["test_cases"],
+        )
+        if problems:
+            raise ApiError(4220, "；".join(problems))
+
+        for key, value in fields.items():
+            setattr(row, key, value)
+        await self._session.flush()
+        await AuditService(self._session).record(
+            "admin_exercise_update",
+            user_id=admin_id,
+            target_type="exercise",
+            target_id=row.id,
+            # 只记改了哪些字段与当前状态：值里可能有整份解析与参考实现，不进审计
+            detail={
+                "fields": sorted(fields),
+                "type": row.type,
+                "status": row.status,
+                "stem": row.stem[:40],
+            },
+            request_id=request_id,
+        )
+        return row
+
+    async def delete(self, exercise_id: str, *, admin_id: str, request_id: str) -> dict:
+        """删除习题并**手工级联**删 Submission 与错题条目（M-2 无 ForeignKey 现状）。
+
+        级联而不是拒绝删除：留着提交与错题条目指向一道不存在的习题，错题本与画像
+        就会长期挂着无法访问的死条目（`list_entries` 只能丢弃它们）。删除计数进
+        审计 detail —— 硬删除不可回滚，留痕是唯一的事后依据（spec §8.9 同口径）。
+        """
+        row = await self.get_any(exercise_id)
+        submissions = (
+            await self._session.execute(
+                delete(Submission).where(Submission.exercise_id == exercise_id)
+            )
+        ).rowcount
+        entries = (
+            await self._session.execute(
+                delete(MistakeBookEntry).where(MistakeBookEntry.exercise_id == exercise_id)
+            )
+        ).rowcount
+        await self._session.delete(row)
+        await self._session.flush()
+        await AuditService(self._session).record(
+            "admin_exercise_delete",
+            user_id=admin_id,
+            target_type="exercise",
+            target_id=exercise_id,
+            detail={
+                "stem": row.stem,
+                "submissions_deleted": submissions,
+                "mistake_entries_deleted": entries,
+            },
+            request_id=request_id,
+        )
+        return {"submissions_deleted": submissions, "mistake_entries_deleted": entries}
 
     # ------------------------------------------------------------ 习题辅导（hint SSE）
 
