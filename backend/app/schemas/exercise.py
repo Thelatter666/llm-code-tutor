@@ -114,3 +114,42 @@ class SubmitOut(BaseModel):
     correct_answer: Any = None
     explanation: str = ""
     ai_scored: bool = False
+
+
+# ---------------------------------------------------------------- 错题本视图
+
+class MistakeEntryOut(BaseModel):
+    """错题条目 + 习题摘要（spec §6.2 mistake 行）。
+
+    嵌套的 `exercise` 复用 `ExerciseListItem` —— 学生视图不含 answer /
+    explanation / test_cases，错题本列表因此天然不泄题。
+    """
+
+    id: str
+    exercise_id: str
+    wrong_count: int
+    consecutive_correct: int
+    last_wrong_answer: Any = None
+    last_wrong_at: datetime | None = None
+    mastered: bool
+    mastered_at: datetime | None = None
+    exercise: ExerciseListItem
+
+
+class WeakKnowledgePointOut(BaseModel):
+    """薄弱知识点（CONTEXT.md「WeakKnowledgePoint」）：实时聚合，无独立表。"""
+
+    knowledge_tag: str
+    wrong_count: int
+
+
+class RecommendationItemOut(BaseModel):
+    """推荐项；`filled_by` 区分画像推荐与随机补足，标注必须可见（spec §8.5）。"""
+
+    exercise: ExerciseListItem
+    filled_by: str
+
+
+class RecommendationsOut(BaseModel):
+    items: list[RecommendationItemOut]
+    weak_tags: list[str] = []
