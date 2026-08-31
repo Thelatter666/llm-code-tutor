@@ -13,13 +13,22 @@ email/password 自改允许。
 """
 
 from fastapi.concurrency import run_in_threadpool
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ApiError
 from app.core.security import hash_password
 from app.domain.auth.user import ACTIVE, ADMIN
-from app.infrastructure.persistence.models import User
+from app.infrastructure.persistence.models import (
+    CodeAnalysis,
+    CodeRun,
+    CodeSession,
+    Conversation,
+    Message,
+    MistakeBookEntry,
+    Submission,
+    User,
+)
 from app.services.audit_service import AuditService
 
 
@@ -145,6 +154,94 @@ class UserService:
             request_id=request_id,
         )
         return row
+
+    # ------------------------------------------------------------ 硬删除（Task 2）
+
+    async def delete(self, user_id: str, *, admin_id: str, request_id: str) -> dict:
+        """硬删除 + 手工级联（spec §8.9；无 ForeignKey，级联靠服务层序列）。
+
+        **级联清单（按删除顺序）**：
+        1. 会话（Conversation）→ 先删其消息（Message，按会话 id 定位）
+        2. 提交（Submission）
+        3. 错题条目（MistakeBookEntry）
+        4. 代码会话（CodeSession）
+        5. 代码分析（CodeAnalysis）
+        6. 代码运行（CodeRun）
+
+        **不级联的两项例外（裁定 9 / spec §8.9）**：
+        - `AuditLog` 一律保留 —— 审计的可追溯性优先于数据清理，硬删除本身也写一条
+          `admin_user_delete` 审计（含级联计数，照 admin_exercise_delete 先例）。
+        - `KnowledgeBase.owner_id` 悬空 —— 知识库是共享资产，不随建库管理员删除；
+          知识库展示必须容忍 owner 缺失（不得 5000 或消失）。
+
+        **级联清单新增表时**：必须同步更新本 docstring 与 `admin_user_delete`
+        审计的 detail 计数键 —— 无 FK 架构下漏删即孤儿数据。
+        """
+        row = await self.get_any(user_id)
+        if user_id == admin_id:
+            raise ApiError(4220, "不能删除自己")
+        if row.role == ADMIN:
+            # 裁定 1：末位 active admin 守卫（防御性保险带，见类 docstring）
+            await self._ensure_last_admin(exclude_user_id=user_id)
+
+        conversation_ids = list(
+            (
+                await self._session.execute(
+                    select(Conversation.id).where(Conversation.user_id == user_id)
+                )
+            ).scalars().all()
+        )
+        messages_deleted = 0
+        if conversation_ids:
+            messages_deleted = (
+                await self._session.execute(
+                    delete(Message).where(Message.conversation_id.in_(conversation_ids))
+                )
+            ).rowcount
+            await self._session.execute(
+                delete(Conversation).where(Conversation.id.in_(conversation_ids))
+            )
+
+        counts = {
+            "conversations_deleted": len(conversation_ids),
+            "messages_deleted": messages_deleted,
+            "submissions_deleted": (
+                await self._session.execute(
+                    delete(Submission).where(Submission.user_id == user_id)
+                )
+            ).rowcount,
+            "mistake_entries_deleted": (
+                await self._session.execute(
+                    delete(MistakeBookEntry).where(MistakeBookEntry.user_id == user_id)
+                )
+            ).rowcount,
+            "code_sessions_deleted": (
+                await self._session.execute(
+                    delete(CodeSession).where(CodeSession.user_id == user_id)
+                )
+            ).rowcount,
+            "code_analyses_deleted": (
+                await self._session.execute(
+                    delete(CodeAnalysis).where(CodeAnalysis.user_id == user_id)
+                )
+            ).rowcount,
+            "code_runs_deleted": (
+                await self._session.execute(
+                    delete(CodeRun).where(CodeRun.user_id == user_id)
+                )
+            ).rowcount,
+        }
+        await self._session.delete(row)
+        await self._session.flush()
+        await AuditService(self._session).record(
+            "admin_user_delete",
+            user_id=admin_id,
+            target_type="user",
+            target_id=user_id,
+            detail={"username": row.username, **counts},
+            request_id=request_id,
+        )
+        return counts
 
     # ------------------------------------------------------------ 内部
 

@@ -59,6 +59,21 @@ async def create_user(
     return ok(UserOut.model_validate(row).model_dump(), request_id=rid)
 
 
+@router.delete("/{user_id}")
+async def delete_user(
+    user_id: str, session: SessionDep, rid: CurrentRidDep, user: AdminDep
+):
+    """硬删除 + 手工级联（spec §8.9）；级联计数进审计 detail。
+
+    非日常路径 —— 日常停用走 PATCH `status:"disabled"`（保留全部数据）。
+    """
+    counts = await UserService(session).delete(
+        user_id, admin_id=user.id, request_id=rid
+    )
+    await session.commit()
+    return ok({"deleted": True, **counts}, request_id=rid)
+
+
 @router.patch("/{user_id}")
 async def update_user(
     user_id: str,

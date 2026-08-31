@@ -16,7 +16,19 @@ from sqlalchemy.pool import StaticPool
 from app.domain.auth.user import ADMIN
 from app.infrastructure.persistence import models  # noqa: F401
 from app.infrastructure.persistence.db import Base, _apply_pragmas, get_session
-from app.infrastructure.persistence.models import AuditLog, User
+from app.infrastructure.persistence.models import (
+    AuditLog,
+    CodeAnalysis,
+    CodeRun,
+    CodeSession,
+    Conversation,
+    Exercise,
+    KnowledgeBase,
+    Message,
+    MistakeBookEntry,
+    Submission,
+    User,
+)
 from app.main import app
 
 PASSWORD = "Secret123!"
@@ -378,3 +390,224 @@ async def test_patch_update_writes_audit_without_secret_values(client, factory):
     # 密码新值与新 email 值都不进审计 detail
     assert "NewPass123!" not in str(row.detail)
     assert "aud2@x.com" not in str(row.detail)
+
+
+# ------------------------------------------------------------ 硬删除级联（Task 2）
+
+
+async def _seed_user_with_all_data(factory, user_id: str) -> None:
+    """造全七类关联数据（spec §8.9 级联清单）供删除用例。"""
+    async with factory() as s:
+        conv = Conversation(user_id=user_id, title="c")
+        s.add(conv)
+        await s.flush()
+        s.add(Message(conversation_id=conv.id, role="user", content="hi"))
+        exercise = Exercise(
+            type="choice", stem="q", answer="A", difficulty=1, source="seed"
+        )
+        s.add(exercise)
+        await s.flush()
+        s.add(
+            Submission(
+                user_id=user_id,
+                exercise_id=exercise.id,
+                answer="A",
+                is_correct=True,
+                score=100,
+            )
+        )
+        s.add(
+            MistakeBookEntry(
+                user_id=user_id,
+                exercise_id=exercise.id,
+                wrong_count=1,
+                last_wrong_at=None,
+            )
+        )
+        s.add(CodeSession(user_id=user_id, language="python", source_code="x"))
+        s.add(
+            CodeAnalysis(
+                user_id=user_id,
+                language="python",
+                source_hash="h1",
+                static_report={"issues": []},
+            )
+        )
+        s.add(
+            CodeRun(
+                user_id=user_id,
+                language="python",
+                source_code="x",
+                status="accepted",
+                stdout="",
+                stderr="",
+            )
+        )
+        # 审计行是「不级联例外」之一：硬删除后必须原样保留
+        s.add(AuditLog(user_id=user_id, action="login", target_type="user"))
+        await s.commit()
+
+
+@pytest.mark.asyncio
+async def test_hard_delete_cascades_all_tables_and_keeps_audit(client, factory):
+    """spec §8.9：七表级联归零、AuditLog 一律保留、计数进删除审计。"""
+    token = await _admin_token(client, factory)
+    r = await client.post(
+        "/api/v1/admin/users",
+        headers=_auth(token),
+        json={"username": "victim", "email": "victim@x.com", "password": PASSWORD},
+    )
+    uid = r.json()["data"]["id"]
+    await _seed_user_with_all_data(factory, uid)
+
+    r = await client.delete(f"/api/v1/admin/users/{uid}", headers=_auth(token))
+    assert r.json()["code"] == 0
+    assert r.json()["data"]["deleted"] is True
+    assert r.json()["data"]["conversations_deleted"] == 1
+    assert r.json()["data"]["messages_deleted"] == 1
+    assert r.json()["data"]["submissions_deleted"] == 1
+    assert r.json()["data"]["mistake_entries_deleted"] == 1
+    assert r.json()["data"]["code_sessions_deleted"] == 1
+    assert r.json()["data"]["code_analyses_deleted"] == 1
+    assert r.json()["data"]["code_runs_deleted"] == 1
+
+    async with factory() as s:
+        assert await s.get(User, uid) is None
+        # 七表全部归零
+        assert (
+            (await s.execute(select(func.count()).select_from(Message))).scalar_one() == 0
+        )
+        assert (
+            (await s.execute(select(func.count()).select_from(Conversation))).scalar_one()
+            == 0
+        )
+        assert (
+            (
+                await s.execute(
+                    select(func.count())
+                    .select_from(Submission)
+                    .where(Submission.user_id == uid)
+                )
+            ).scalar_one()
+            == 0
+        )
+        assert (
+            (
+                await s.execute(
+                    select(func.count())
+                    .select_from(MistakeBookEntry)
+                    .where(MistakeBookEntry.user_id == uid)
+                )
+            ).scalar_one()
+            == 0
+        )
+        assert (
+            (
+                await s.execute(
+                    select(func.count())
+                    .select_from(CodeSession)
+                    .where(CodeSession.user_id == uid)
+                )
+            ).scalar_one()
+            == 0
+        )
+        assert (
+            (
+                await s.execute(
+                    select(func.count())
+                    .select_from(CodeAnalysis)
+                    .where(CodeAnalysis.user_id == uid)
+                )
+            ).scalar_one()
+            == 0
+        )
+        assert (
+            (
+                await s.execute(
+                    select(func.count())
+                    .select_from(CodeRun)
+                    .where(CodeRun.user_id == uid)
+                )
+            ).scalar_one()
+            == 0
+        )
+        # AuditLog 不随用户删除（spec §8.9：审计可追溯性优先）
+        kept = (
+            await s.execute(select(AuditLog).where(AuditLog.user_id == uid))
+        ).scalars().all()
+        assert {row.action for row in kept} == {"login"}
+
+        # 删除操作本身的审计行带级联计数
+        delete_log = (
+            await s.execute(
+                select(AuditLog).where(AuditLog.action == "admin_user_delete")
+            )
+        ).scalar_one()
+        assert delete_log.detail["submissions_deleted"] == 1
+        assert delete_log.detail["code_runs_deleted"] == 1
+
+
+@pytest.mark.asyncio
+async def test_hard_delete_unknown_user_4040(client, factory):
+    token = await _admin_token(client, factory)
+    r = await client.delete("/api/v1/admin/users/no-such", headers=_auth(token))
+    assert r.json()["code"] == 4040
+
+
+@pytest.mark.asyncio
+async def test_hard_delete_self_rejected_4220(client, factory):
+    """裁定 1：禁自删 —— 最后一个管理员不能被自己锁死系统。"""
+    token = await _admin_token(client, factory)
+    me = (await client.get("/api/v1/auth/me", headers=_auth(token))).json()["data"]
+    r = await client.delete(f"/api/v1/admin/users/{me['id']}", headers=_auth(token))
+    assert r.json()["code"] == 4220
+
+
+@pytest.mark.asyncio
+async def test_hard_delete_last_admin_guard(session):
+    """裁定 1：删其他 admin 后须剩余 ≥1 名 active admin（服务层不变量兜底）。"""
+    from app.services.user_service import UserService
+
+    admin_a = User(username="da", email="da@x.com", hashed_password="x", role=ADMIN)
+    admin_b = User(username="db", email="db@x.com", hashed_password="x", role=ADMIN)
+    session.add_all([admin_a, admin_b])
+    await session.flush()
+
+    # 反常前置态：执行者被库层手动停用
+    admin_a.status = "disabled"
+    await session.flush()
+
+    with pytest.raises(Exception) as exc:
+        await UserService(session).delete(
+            admin_b.id, admin_id=admin_a.id, request_id="t"
+        )
+    assert getattr(exc.value, "code", None) == 4220
+
+
+@pytest.mark.asyncio
+async def test_hard_delete_keeps_owned_knowledge_base(client, factory):
+    """裁定 9：KB.owner_id 悬空例外 —— 删除建库管理员不级联知识库、展示不 5000。"""
+    token = await _admin_token(client, factory)
+    r = await client.post(
+        "/api/v1/admin/users",
+        headers=_auth(token),
+        json={"username": "kbowner", "email": "kbowner@x.com", "password": PASSWORD},
+    )
+    uid = r.json()["data"]["id"]
+
+    async with factory() as s:
+        s.add(KnowledgeBase(name="kb-of-victim", owner_id=uid))
+        await s.commit()
+
+    await client.delete(f"/api/v1/admin/users/{uid}", headers=_auth(token))
+
+    # 知识库行保留，owner_id 悬空指向已删除用户
+    async with factory() as s:
+        kb = (await s.execute(select(KnowledgeBase))).scalar_one()
+        assert kb.name == "kb-of-victim" and kb.owner_id == uid
+
+    # 展示路径（学生端列表）对 owner 缺失容忍：200 + 数据仍在，不是 5000
+    student_token = await _register(client, "student-kb")
+    r = await client.get("/api/v1/knowledge/bases", headers=_auth(student_token))
+    assert r.json()["code"] == 0
+    assert "kb-of-victim" in [b["name"] for b in r.json()["data"]]
