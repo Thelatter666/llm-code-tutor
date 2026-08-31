@@ -5,7 +5,7 @@
 的条目永久排除，「错题驱动学习」退化为单向门。
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.domain.exercise.mastery import (
     MASTERY_THRESHOLD,
@@ -13,8 +13,8 @@ from app.domain.exercise.mastery import (
     apply_answer,
 )
 
-NOW = datetime(2026, 8, 31, 12, 0, 0, tzinfo=timezone.utc)
-LATER = datetime(2026, 8, 31, 13, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 31, 12, 0, 0, tzinfo=UTC)
+LATER = datetime(2026, 8, 31, 13, 0, 0, tzinfo=UTC)
 
 
 def test_wrong_without_entry_creates_entry():

@@ -60,3 +60,57 @@ class SubmissionOut(BaseModel):
     feedback: str | None = None
     attempt_no: int
     created_at: datetime
+
+
+# ---------------------------------------------------------------- 学生端视图
+
+class ExerciseListItem(BaseModel):
+    """列表项：不含 answer / explanation / test_cases（提交前不得泄题）。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    type: str
+    stem: str
+    options: dict | None = None
+    difficulty: int
+    knowledge_tags: list[str] = []
+
+
+class ExerciseDetail(BaseModel):
+    """详情：列表项字段 + coding 题的执行语言；同样不泄题。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    type: str
+    stem: str
+    options: dict | None = None
+    difficulty: int
+    knowledge_tags: list[str] = []
+    language: str | None = None
+
+
+class SubmitIn(BaseModel):
+    answer: Any = None
+
+
+class SubmitOut(BaseModel):
+    """判分结果：提交后揭示正确答案与解析（spec §5.1 前端展示需求）。
+
+    `ai_scored` 是前端「AI 参考评分」标识的开关；配合 judge_detail.judge_mode
+    区分 model / mock_heuristic 两种标注（降级必须可见）。
+    """
+
+    submission_id: str
+    exercise_id: str
+    answer: Any = None
+    is_correct: bool | None = None
+    score: int
+    judge_detail: dict | None = None
+    feedback: str | None = None
+    attempt_no: int
+    created_at: datetime
+    correct_answer: Any = None
+    explanation: str = ""
+    ai_scored: bool = False

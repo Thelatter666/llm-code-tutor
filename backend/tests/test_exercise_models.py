@@ -12,44 +12,44 @@ from app.infrastructure.persistence.models import Exercise, MistakeBookEntry, Su
 
 
 def _exercise(**over) -> Exercise:
-    fields = dict(
-        type="choice",
-        stem="以下哪个是合法的变量名？",
-        options={"A": "2name", "B": "user_name", "C": "class", "D": "my-name"},
-        answer="B",
-        knowledge_tags=["变量与赋值"],
-        difficulty=1,
-        source="seed",
-        status="published",
-    )
+    fields: dict = {
+        "type": "choice",
+        "stem": "以下哪个是合法的变量名？",
+        "options": {"A": "2name", "B": "user_name", "C": "class", "D": "my-name"},
+        "answer": "B",
+        "knowledge_tags": ["变量与赋值"],
+        "difficulty": 1,
+        "source": "seed",
+        "status": "published",
+    }
     fields.update(over)
     return Exercise(**fields)
 
 
 def _submission(exercise_id: str, **over) -> Submission:
-    fields = dict(
-        user_id="u-1",
-        exercise_id=exercise_id,
-        answer={"source": "print(1)"},
-        is_correct=False,
-        score=50,
-        judge_detail={"method": "direct", "missing": ["C"]},
-        feedback=None,
-        attempt_no=1,
-    )
+    fields: dict = {
+        "user_id": "u-1",
+        "exercise_id": exercise_id,
+        "answer": {"source": "print(1)"},
+        "is_correct": False,
+        "score": 50,
+        "judge_detail": {"method": "direct", "missing": ["C"]},
+        "feedback": None,
+        "attempt_no": 1,
+    }
     fields.update(over)
     return Submission(**fields)
 
 
 def _mistake_entry(exercise_id: str, **over) -> MistakeBookEntry:
-    fields = dict(
-        user_id="u-1",
-        exercise_id=exercise_id,
-        wrong_count=1,
-        consecutive_correct=0,
-        last_wrong_answer={"selected": ["A", "B"]},
-        mastered=False,
-    )
+    fields: dict = {
+        "user_id": "u-1",
+        "exercise_id": exercise_id,
+        "wrong_count": 1,
+        "consecutive_correct": 0,
+        "last_wrong_answer": {"selected": ["A", "B"]},
+        "mastered": False,
+    }
     fields.update(over)
     return MistakeBookEntry(**fields)
 

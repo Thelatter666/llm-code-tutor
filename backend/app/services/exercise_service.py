@@ -97,6 +97,42 @@ class ExerciseService:
             raise ApiError(4040, "习题不存在")
         return row
 
+    async def list_exercises(
+        self,
+        *,
+        type: str | None = None,
+        difficulty: int | None = None,
+        knowledge_tag: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[Exercise], int, list[str]]:
+        """学生端列表：只暴露 published（spec §6.2）。
+
+        返回 `(items, total, facets)`；facets.knowledge_tags 供前端筛选下拉，
+        不受 knowledge_tag 过滤影响（契约定稿 11）。knowledge_tag 是 JSON 列，
+        Python 层过滤（spec §3.2 权衡 3：声明规模下聚合成本可忽略）。
+        """
+        stmt = select(Exercise).where(Exercise.status == "published")
+        if type:
+            stmt = stmt.where(Exercise.type == type)
+        if difficulty:
+            stmt = stmt.where(Exercise.difficulty == difficulty)
+        rows = list(
+            (
+                await self._session.execute(
+                    stmt.order_by(Exercise.difficulty, Exercise.created_at, Exercise.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        facets = sorted({tag for row in rows for tag in (row.knowledge_tags or [])})
+        if knowledge_tag:
+            rows = [row for row in rows if knowledge_tag in (row.knowledge_tags or [])]
+        total = len(rows)
+        start = (page - 1) * page_size
+        return rows[start : start + page_size], total, facets
+
     # ------------------------------------------------------------ 判题提交
 
     async def submit(
