@@ -13,6 +13,7 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.infrastructure.adapters.document.parsers import MultiFormatDocumentParser
 from app.infrastructure.adapters.execution.subprocess_executor import (
     SubprocessCodeExecutor,
 )
@@ -20,6 +21,7 @@ from app.infrastructure.adapters.vectorstore.chroma_store import ChromaVectorSto
 from app.infrastructure.embedder_runtime import EmbedderRuntime
 from app.infrastructure.llm_runtime import LLMRuntime
 from app.infrastructure.ports.code_executor import CodeExecutor
+from app.infrastructure.ports.document import DocumentParser
 from app.infrastructure.ports.vectorstore import VectorStore
 from app.infrastructure.registry import (
     EmbeddingConfig,
@@ -40,6 +42,8 @@ _llm_revision: int | None = None
 _llm_external: bool = False
 # 代码执行器是进程内单例（创建成本很低，但只应有一个，便于测试整体替换）
 _code_executor: CodeExecutor | None = None
+# 文档解析器是进程内单例（无状态，与执行器同构：留测试注入点）
+_document_parser: DocumentParser | None = None
 
 
 def default_chroma_dir() -> Path:
@@ -161,10 +165,29 @@ def set_code_executor(executor: CodeExecutor | None) -> None:
     _code_executor = executor
 
 
+def get_document_parser() -> DocumentParser:
+    """文档解析器单例（spec §8.2 / §4.2 硬约束 2）。
+
+    与 `get_code_executor()` 同构：无配置依赖、创建成本极低，访问点只为
+    **测试可整体替换为 Fake**（`set_document_parser`），服务层因此不必
+    import 任何具体适配器。
+    """
+    global _document_parser
+    if _document_parser is None:
+        _document_parser = MultiFormatDocumentParser()
+    return _document_parser
+
+
+def set_document_parser(parser: DocumentParser | None) -> None:
+    global _document_parser
+    _document_parser = parser
+
+
 def reset_runtime() -> None:
     """仅供测试：清空全部进程级单例。"""
     global _vector_store, _embedder_runtime, _embedder_revision
     global _llm_runtime, _llm_revision, _llm_external, _code_executor
+    global _document_parser
     _vector_store = None
     _embedder_runtime = None
     _embedder_revision = None
@@ -172,3 +195,4 @@ def reset_runtime() -> None:
     _llm_revision = None
     _llm_external = False
     _code_executor = None
+    _document_parser = None

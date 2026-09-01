@@ -6,7 +6,7 @@
   运行时按下一次调用按 revision 重绑 —— 无需重启（裁定 2 字段面见 schemas/admin.py）。
 """
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 
@@ -17,6 +17,7 @@ from app.infrastructure.persistence.models import User
 from app.infrastructure.registry import get_or_create_singleton
 from app.infrastructure.runtime import get_embedder_runtime, refresh_embedder_config
 from app.schemas.admin import ModelConfigPut
+from app.schemas.common import ApiResponse
 from app.schemas.knowledge import EmbeddingConfigIn
 from app.services.model_config_service import ModelConfigService
 
@@ -51,14 +52,14 @@ def _model_config_out(cfg) -> dict:
     }
 
 
-@router.get("/model-config")
+@router.get("/model-config", response_model=ApiResponse[Any])
 async def get_model_config(session: SessionDep, rid: CurrentRidDep, user: AdminDep):
     """当前 LLM 配置（含掩码 api_key 与 revision，供管理页回显）。"""
     cfg = await get_or_create_singleton(session)
     return ok(_model_config_out(cfg), request_id=rid)
 
 
-@router.put("/model-config")
+@router.put("/model-config", response_model=ApiResponse[Any])
 async def put_model_config(
     body: ModelConfigPut,
     session: SessionDep,
@@ -80,7 +81,7 @@ async def put_model_config(
     return ok(_model_config_out(cfg), request_id=rid)
 
 
-@router.post("/model-config/test")
+@router.post("/model-config/test", response_model=ApiResponse[Any])
 async def test_model_config(session: SessionDep, rid: CurrentRidDep, user: AdminDep):
     """测试**已保存配置**的连通性（裁定 2：不接受覆盖参数，前端先保存再测试）。
 
@@ -91,12 +92,12 @@ async def test_model_config(session: SessionDep, rid: CurrentRidDep, user: Admin
     return ok(result, request_id=rid)
 
 
-@router.put("/model-config/embedding")
+@router.put("/model-config/embedding", response_model=ApiResponse[Any])
 async def update_embedding(
     body: EmbeddingConfigIn,
     session: SessionDep,
     rid: CurrentRidDep,
-    user: User = Depends(require_admin),
+    user: AdminDep,
 ):
     """切换 embedding 配置。
 
@@ -124,9 +125,9 @@ async def update_embedding(
     return ok(result, request_id=rid)
 
 
-@router.get("/model-config/embedding-consistency")
+@router.get("/model-config/embedding-consistency", response_model=ApiResponse[Any])
 async def embedding_consistency(
-    session: SessionDep, rid: CurrentRidDep, user: User = Depends(require_admin)
+    session: SessionDep, rid: CurrentRidDep, user: AdminDep
 ):
     """spec §8.7 步骤 4：比对配置里的模型与切片上记的模型，供启动/巡检告警。"""
     current = get_embedder_runtime().current

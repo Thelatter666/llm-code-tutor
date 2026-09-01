@@ -1,10 +1,14 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select, text
 
 from app.infrastructure.persistence.db import init_db
-from app.infrastructure.persistence.models import MODEL_CONFIG_SINGLETON_ID, ModelConfig, User
+from app.infrastructure.persistence.models import (
+    MODEL_CONFIG_SINGLETON_ID,
+    ModelConfig,
+    User,
+)
 
 
 @pytest.mark.asyncio
@@ -52,7 +56,7 @@ async def test_datetime_roundtrip_preserves_utc_awareness(session):
         username="tz",
         email="tz@example.com",
         hashed_password="x",
-        created_at=datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+        created_at=datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC),
     )
     session.add(user)
     await session.commit()
@@ -60,7 +64,7 @@ async def test_datetime_roundtrip_preserves_utc_awareness(session):
 
     got = (await session.execute(select(User).where(User.username == "tz"))).scalar_one()
     assert got.created_at.tzinfo is not None
-    assert got.created_at == datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    assert got.created_at == datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 
 
 @pytest.mark.asyncio

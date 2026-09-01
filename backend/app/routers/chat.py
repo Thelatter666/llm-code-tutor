@@ -9,7 +9,7 @@
 UUID 放进请求头，SSE 响应头会原样回传。
 """
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -27,6 +27,7 @@ from app.schemas.chat import (
     StopIn,
     StopOut,
 )
+from app.schemas.common import ApiResponse
 from app.services.chat_service import ChatService
 
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
@@ -34,7 +35,7 @@ router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 UserDep = Annotated[User, Depends(get_current_user)]
 
 
-@router.post("/conversations")
+@router.post("/conversations", response_model=ApiResponse[Any])
 async def create_conversation(
     body: ConversationIn, session: SessionDep, rid: CurrentRidDep, user: UserDep
 ):
@@ -43,13 +44,13 @@ async def create_conversation(
     return ok(ConversationOut.model_validate(conv).model_dump(), request_id=rid)
 
 
-@router.get("/conversations")
+@router.get("/conversations", response_model=ApiResponse[Any])
 async def list_conversations(session: SessionDep, rid: CurrentRidDep, user: UserDep):
     rows = await ChatService(session).list_conversations(user.id)
     return ok([ConversationOut.model_validate(r).model_dump() for r in rows], request_id=rid)
 
 
-@router.get("/conversations/{conversation_id}/messages")
+@router.get("/conversations/{conversation_id}/messages", response_model=ApiResponse[Any])
 async def list_messages(
     conversation_id: str, session: SessionDep, rid: CurrentRidDep, user: UserDep
 ):
@@ -57,7 +58,7 @@ async def list_messages(
     return ok([MessageOut.model_validate(r).model_dump() for r in rows], request_id=rid)
 
 
-@router.delete("/conversations/{conversation_id}")
+@router.delete("/conversations/{conversation_id}", response_model=ApiResponse[Any])
 async def delete_conversation(
     conversation_id: str, session: SessionDep, rid: CurrentRidDep, user: UserDep
 ):
@@ -66,7 +67,10 @@ async def delete_conversation(
     return ok({"deleted": True}, request_id=rid)
 
 
-@router.post("/conversations/{conversation_id}/messages")
+@router.post(
+    "/conversations/{conversation_id}/messages",
+    responses={200: {"content": {"text/event-stream": {}}, "description": "SSE 事件流（spec §6.1）"}},
+)
 async def post_message(
     conversation_id: str,
     body: ChatMessageIn,
@@ -105,7 +109,7 @@ async def post_message(
     )
 
 
-@router.post("/conversations/{conversation_id}/stop")
+@router.post("/conversations/{conversation_id}/stop", response_model=ApiResponse[Any])
 async def stop_generation(
     conversation_id: str,
     body: StopIn,

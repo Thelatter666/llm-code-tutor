@@ -14,6 +14,7 @@ of 384, got 256`）。按维度分区后，维度不同的向量天然落在不�
 所有 Chroma 调用都是同步阻塞的，统一经 `run_in_threadpool` 卸载（ADR-0002）。
 """
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,8 @@ from chromadb.config import Settings as ChromaSettings
 from fastapi.concurrency import run_in_threadpool
 
 from app.infrastructure.ports.vectorstore import VectorHit, VectorRecord
+
+logger = logging.getLogger(__name__)
 
 # Chroma 1.x 要求集合名 3–512 字符；维度后缀见文件头说明
 COLLECTION_PREFIX = "course_chunks"
@@ -159,7 +162,8 @@ class ChromaVectorStore:
         for dimension, _collection in empties:
             try:
                 self._client.delete_collection(collection_name(dimension))
-            except Exception:  # noqa: BLE001 - 清理失败不影响主流程
+            except Exception as exc:  # noqa: BLE001 - 清理失败不影响主流程，但必须留痕
+                logger.warning("删除空集合失败 dimension=%s：%s", dimension, exc)
                 continue
             self._collections.pop(dimension, None)
 

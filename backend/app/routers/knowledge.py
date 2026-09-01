@@ -1,25 +1,28 @@
 """学生侧知识库只读端点（spec §6.2 knowledge 行）。"""
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 
 from app.core.deps import CurrentRidDep, SessionDep, get_current_user
 from app.core.responses import ok
 from app.infrastructure.persistence.models import User
+from app.schemas.common import ApiResponse
 from app.schemas.knowledge import KnowledgeBaseOut, SearchOut
 from app.services.knowledge_service import KnowledgeBaseService
 from app.services.retrieval_service import RetrievalService
 
 router = APIRouter(prefix="/api/v1/knowledge", tags=["knowledge"])
 
+UserDep = Annotated[User, Depends(get_current_user)]
 
-@router.get("/bases")
+
+@router.get("/bases", response_model=ApiResponse[Any])
 async def list_bases(
     session: SessionDep,
     rid: CurrentRidDep,
+    user: UserDep,
     course_code: str | None = None,
-    user: User = Depends(get_current_user),
 ):
     """`course_code` 为空表示不限课程（spec §6.2）。"""
     bases = await KnowledgeBaseService(session).list_bases(course_code)
@@ -28,15 +31,15 @@ async def list_bases(
     )
 
 
-@router.get("/search")
+@router.get("/search", response_model=ApiResponse[Any])
 async def search(
     session: SessionDep,
     rid: CurrentRidDep,
     query: Annotated[str, Query(min_length=1)],
+    user: UserDep,
     kb_ids: Annotated[list[str] | None, Query()] = None,
     course_code: str | None = None,
     top_k: int | None = None,
-    user: User = Depends(get_current_user),
 ):
     """spec §7.2 七步装配链路；KB 不存在 → 4040，未就绪 / 模型未加载 → 5032。"""
     result = await RetrievalService(session).search(

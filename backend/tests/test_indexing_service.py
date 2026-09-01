@@ -10,6 +10,7 @@ from app.core.errors import ApiError
 from app.domain.knowledge.status import DOC_FAILED, DOC_READY
 from app.infrastructure.embedder_runtime import EmbedderRuntime
 from app.infrastructure.persistence.models import Chunk, Document
+from app.infrastructure.ports.document import DocumentParser, ParsedDocument
 from app.services.indexing_service import IndexingService
 from tests.fakes import BrokenEmbedder, FakeEmbedder, FakeVectorStore, SentinelEmbedder
 
@@ -304,3 +305,48 @@ async def test_concurrent_index_tasks_are_serialized(session, tmp_path):
     svc = _svc(session, FakeVectorStore(), SlowEmbedder())
     await asyncio.gather(svc.index_document("a"), svc.index_document("b"))
     assert peak == 1
+
+
+class _RecordingParser:
+    """FakeDocumentParser：记录调用并返回固定文本。
+
+    C1 锁（清理批次 H-3）：索引若回退为直连适配器，本替身不会被调用、
+    切片内容也不会来自注入文本 —— 用例即失败。
+    """
+
+    def __init__(self, text="## 注入\n\n" + "内容。" * 400):
+        self.calls = []
+        self.text = text
+
+    def parse(self, path, source_type):
+        self.calls.append((path, source_type))
+        return ParsedDocument(text=self.text, meta={"fake": True})
+
+
+@pytest.mark.asyncio
+async def test_parse_goes_through_injected_document_parser(session, tmp_path):
+    doc = await _mk(session, tmp_path)
+    parser = _RecordingParser()
+    svc = IndexingService(
+        session,
+        embedder=_runtime(FakeEmbedder()),
+        vector_store=FakeVectorStore(),
+        parser=parser,
+    )
+
+    await svc.index_document(doc.id)
+
+    assert len(parser.calls) == 1
+    path, source_type = parser.calls[0]
+    assert source_type == "md"
+    assert str(path).endswith("a.md")
+    got = await _doc_state(session)
+    assert got["status"] == DOC_READY
+    rows = await _chunks(session)
+    assert rows and all("注入" in r.content for r in rows)
+
+
+def test_multi_format_parser_satisfies_port():
+    from app.infrastructure.adapters.document.parsers import MultiFormatDocumentParser
+
+    assert isinstance(MultiFormatDocumentParser(), DocumentParser)

@@ -28,7 +28,7 @@
 命中黑名单时**执行器内部**就直接返回了（`status=blocked`），但本服务仍然照常
 落库与审计 —— 「谁在反复尝试危险调用」这件事本身需要可见性。
 
-**草稿（`CodeSession`）与运行（`CodeRun`）没有外键**：删草稿不该连带删掉运行
+**代码会话（`CodeSession`）与运行（`CodeRun`）没有外键**：删会话不该连带删掉运行
 历史（spec §5 未要求外键，两者按 user_id 各自隔离）。
 """
 
@@ -187,10 +187,10 @@ class CodeService:
         ).scalars().all()
         return list(rows), total
 
-    # ------------------------------------------------------------ 草稿（CodeSession）
+    # ------------------------------------------------------------ 代码会话（CodeSession）
 
     async def create_draft(
-        self, *, user_id: str, language: str, title: str = "未命名草稿", source_code: str = ""
+        self, *, user_id: str, language: str, title: str = "未命名会话", source_code: str = ""
     ) -> CodeSession:
         row = CodeSession(
             user_id=user_id, language=language, title=title, source_code=source_code
@@ -234,7 +234,7 @@ class CodeService:
         await self._session.flush()
 
     async def _own_draft(self, *, user_id: str, draft_id: str) -> CodeSession:
-        """取草稿并校验归属 —— 越权一律 `4040`（不泄露「存在但属于别人」）。"""
+        """取代码会话并校验归属 —— 越权一律 `4040`（不泄露「存在但属于别人」）。"""
         row = (
             await self._session.execute(
                 select(CodeSession).where(
@@ -243,7 +243,7 @@ class CodeService:
             )
         ).scalar_one_or_none()
         if row is None:
-            raise ApiError(4040, "草稿不存在")
+            raise ApiError(4040, "代码会话不存在")
         return row
 
     # ------------------------------------------------------------ 内部辅助

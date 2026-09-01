@@ -5,7 +5,7 @@
 """
 
 import logging
-from typing import Annotated
+from typing import Annotated, Any
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +14,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, UploadFile
 from app.core.deps import CurrentRidDep, SessionDep, require_admin
 from app.core.responses import ok
 from app.infrastructure.persistence.models import User
+from app.schemas.common import ApiResponse
 from app.schemas.knowledge import (
     ChunkOut,
     DocumentOut,
@@ -33,7 +34,7 @@ router = APIRouter(prefix="/api/v1/admin/knowledge", tags=["admin·kb"])
 AdminDep = Annotated[User, Depends(require_admin)]
 
 
-@router.post("/bases")
+@router.post("/bases", response_model=ApiResponse[Any])
 async def create_base(
     body: KnowledgeBaseIn,
     session: SessionDep,
@@ -52,7 +53,7 @@ async def create_base(
     return ok(KnowledgeBaseOut.model_validate(kb).model_dump(), request_id=rid)
 
 
-@router.patch("/bases/{kb_id}")
+@router.patch("/bases/{kb_id}", response_model=ApiResponse[Any])
 async def update_base(
     kb_id: str,
     body: KnowledgeBasePatch,
@@ -72,7 +73,7 @@ async def update_base(
     return ok(KnowledgeBaseOut.model_validate(kb).model_dump(), request_id=rid)
 
 
-@router.delete("/bases/{kb_id}")
+@router.delete("/bases/{kb_id}", response_model=ApiResponse[Any])
 async def delete_base(kb_id: str, session: SessionDep, rid: CurrentRidDep, user: AdminDep):
     """spec §8.6：先删向量 → 再删 Chunk 行 → 再删 Document/KB 行。"""
     await KnowledgeBaseService(session).delete(kb_id, user_id=user.id, request_id=rid)
@@ -80,14 +81,14 @@ async def delete_base(kb_id: str, session: SessionDep, rid: CurrentRidDep, user:
     return ok({"deleted": True}, request_id=rid)
 
 
-@router.post("/bases/{kb_id}/documents")
+@router.post("/bases/{kb_id}/documents", response_model=ApiResponse[Any])
 async def upload_document(
     kb_id: str,
     session: SessionDep,
     rid: CurrentRidDep,
     user: AdminDep,
     tasks: BackgroundTasks,
-    file: UploadFile = File(...),
+    file: Annotated[UploadFile, File(...)],
 ):
     """上传 → 落盘 → 建 Document 行；索引在响应返回后由后台任务执行。
 
@@ -118,7 +119,7 @@ async def _index_in_background(document_id: str) -> None:
             logger.exception("后台索引任务异常 document=%s", document_id)
 
 
-@router.get("/bases/{kb_id}/documents")
+@router.get("/bases/{kb_id}/documents", response_model=ApiResponse[Any])
 async def list_documents(
     kb_id: str,
     session: SessionDep,
@@ -131,7 +132,7 @@ async def list_documents(
     return ok([DocumentOut.model_validate(d).model_dump() for d in docs], request_id=rid)
 
 
-@router.post("/documents/{document_id}/reindex")
+@router.post("/documents/{document_id}/reindex", response_model=ApiResponse[Any])
 async def reindex_document(
     document_id: str, session: SessionDep, rid: CurrentRidDep, user: AdminDep
 ):
@@ -141,7 +142,7 @@ async def reindex_document(
     return ok(DocumentOut.model_validate(doc).model_dump(), request_id=rid)
 
 
-@router.delete("/documents/{document_id}")
+@router.delete("/documents/{document_id}", response_model=ApiResponse[Any])
 async def delete_document(
     document_id: str, session: SessionDep, rid: CurrentRidDep, user: AdminDep
 ):
@@ -152,7 +153,7 @@ async def delete_document(
     return ok({"deleted": True}, request_id=rid)
 
 
-@router.get("/documents/{document_id}/chunks")
+@router.get("/documents/{document_id}/chunks", response_model=ApiResponse[Any])
 async def list_chunks(
     document_id: str, session: SessionDep, rid: CurrentRidDep, user: AdminDep
 ):
@@ -163,7 +164,7 @@ async def list_chunks(
     return ok([ChunkOut.model_validate(c).model_dump() for c in chunks], request_id=rid)
 
 
-@router.post("/bases/{kb_id}/rebuild-vector")
+@router.post("/bases/{kb_id}/rebuild-vector", response_model=ApiResponse[Any])
 async def rebuild_vector(kb_id: str, session: SessionDep, rid: CurrentRidDep, user: AdminDep):
     """spec §8.7 步骤 3：切换 embedding 配置后的强制全量重建。"""
     result = await RebuildService(session).rebuild(kb_id, user_id=user.id, request_id=rid)
@@ -171,7 +172,7 @@ async def rebuild_vector(kb_id: str, session: SessionDep, rid: CurrentRidDep, us
     return ok(RebuildOut(**result).model_dump(), request_id=rid)
 
 
-@router.post("/bases/{kb_id}/gc-orphan-vectors")
+@router.post("/bases/{kb_id}/gc-orphan-vectors", response_model=ApiResponse[Any])
 async def gc_orphan_vectors(
     kb_id: str, session: SessionDep, rid: CurrentRidDep, user: AdminDep
 ):

@@ -6,6 +6,9 @@ CodeParser）里没有文档解析这一项 —— 但它是知识库接入的�
 
 `parse()` 为同步方法：pdfplumber 与 python-docx 都是同步阻塞库，由调用方
 （IndexingService）经 `run_in_threadpool` 卸载（ADR-0002）。
+
+签名含 `source_type`（清理批次裁定 R4）：服务层拿到的接缝是「按来源类型解析
+源文件」的完整语义，逐格式类只是适配器内部的派发细节。
 """
 
 from dataclasses import dataclass, field
@@ -21,4 +24,4 @@ class ParsedDocument:
 
 @runtime_checkable
 class DocumentParser(Protocol):
-    def parse(self, path: Path) -> ParsedDocument: ...
+    def parse(self, path: Path, source_type: str) -> ParsedDocument: ...

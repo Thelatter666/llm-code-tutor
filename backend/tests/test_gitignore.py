@@ -18,5 +18,7 @@ def test_sensitive_paths_are_git_ignored():
     加密主密钥、含密码哈希的库文件、虚拟环境、依赖目录均不得入库。
     """
     for rel in SENSITIVE:
-        r = subprocess.run(["git", "check-ignore", "-q", rel], cwd=ROOT)
+        r = subprocess.run(
+            ["git", "check-ignore", "-q", rel], cwd=ROOT, check=False
+        )  # 故意不抛错：returncode 就是断言对象
         assert r.returncode == 0, f"{rel} 未被 .gitignore 覆盖"

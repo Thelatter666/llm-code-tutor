@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select, text
@@ -64,7 +64,7 @@ async def test_timestamps_are_timezone_aware_utc(session):
     got = (await session.execute(select(KnowledgeBase))).scalar_one()
     assert isinstance(got.created_at, datetime)
     assert got.created_at.tzinfo is not None
-    assert got.created_at.utcoffset() == timezone.utc.utcoffset(None)
+    assert got.created_at.utcoffset() == UTC.utcoffset(None)
 
 
 @pytest.mark.asyncio

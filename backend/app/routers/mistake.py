@@ -7,7 +7,7 @@
 的声明规模），无需分页；与学生端其它列表端点（会话列表、知识库列表）同构。
 """
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 
@@ -15,6 +15,7 @@ from app.core.deps import CurrentRidDep, SessionDep, get_current_user
 from app.core.errors import ApiError
 from app.core.responses import ok
 from app.infrastructure.persistence.models import Exercise, MistakeBookEntry, User
+from app.schemas.common import ApiResponse
 from app.schemas.exercise import (
     ExerciseListItem,
     MistakeEntryOut,
@@ -44,7 +45,7 @@ def _entry_out(entry: MistakeBookEntry, exercise: Exercise) -> dict:
     ).model_dump()
 
 
-@router.get("")
+@router.get("", response_model=ApiResponse[Any])
 async def list_mistakes(
     session: SessionDep,
     rid: CurrentRidDep,
@@ -56,7 +57,7 @@ async def list_mistakes(
     return ok([_entry_out(entry, exercise) for entry, exercise in pairs], request_id=rid)
 
 
-@router.get("/profile")
+@router.get("/profile", response_model=ApiResponse[Any])
 async def get_profile(session: SessionDep, rid: CurrentRidDep, user: UserDep):
     """薄弱知识点画像（spec §8.5）：按 tag 聚合 wrong_count，排除已掌握，降序。"""
     rows = await MistakeBookService(session).profile(user.id)
@@ -66,7 +67,7 @@ async def get_profile(session: SessionDep, rid: CurrentRidDep, user: UserDep):
     )
 
 
-@router.get("/recommendations")
+@router.get("/recommendations", response_model=ApiResponse[Any])
 async def get_recommendations(
     session: SessionDep,
     rid: CurrentRidDep,
@@ -90,7 +91,7 @@ async def get_recommendations(
     )
 
 
-@router.delete("/{entry_id}/mastered")
+@router.delete("/{entry_id}/mastered", response_model=ApiResponse[Any])
 async def reset_mastered(
     entry_id: str, session: SessionDep, rid: CurrentRidDep, user: UserDep
 ):

@@ -6,8 +6,9 @@ TextDelta | Usage 的联合类型，而非裸 str。
 """
 
 import asyncio
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import AsyncIterator, Protocol, Union, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 
 @dataclass(frozen=True)
@@ -44,7 +45,7 @@ class Usage:
     estimated: bool = False
 
 
-LLMChunk = Union[TextDelta, Usage]
+LLMChunk = TextDelta | Usage
 
 
 @dataclass(frozen=True)

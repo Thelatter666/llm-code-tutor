@@ -301,7 +301,7 @@ async def test_drafts_are_isolated_between_users(session):
 async def test_draft_defaults_title(session):
     draft = await _svc(session).create_draft(user_id="u1", language=PY)
     await session.commit()
-    assert draft.title == "未命名草稿"
+    assert draft.title == "未命名会话"
     assert draft.source_code == ""
 
 

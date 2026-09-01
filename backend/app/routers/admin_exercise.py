@@ -11,13 +11,14 @@
 看不到的东西，出题人必须看得到。
 """
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 
 from app.core.deps import CurrentRidDep, SessionDep, require_admin
 from app.core.responses import ok
 from app.infrastructure.persistence.models import User
+from app.schemas.common import ApiResponse
 from app.schemas.exercise import (
     STATUS_PATTERN,
     TYPE_PATTERN,
@@ -32,7 +33,7 @@ router = APIRouter(prefix="/api/v1/admin/exercises", tags=["admin·exercise"])
 AdminDep = Annotated[User, Depends(require_admin)]
 
 
-@router.post("")
+@router.post("", response_model=ApiResponse[Any])
 async def create_exercise(
     body: ExerciseIn, session: SessionDep, rid: CurrentRidDep, user: AdminDep
 ):
@@ -53,7 +54,7 @@ async def create_exercise(
     return ok(ExerciseOut.model_validate(row).model_dump(), request_id=rid)
 
 
-@router.get("")
+@router.get("", response_model=ApiResponse[Any])
 async def list_exercises(
     session: SessionDep,
     rid: CurrentRidDep,
@@ -83,14 +84,14 @@ async def list_exercises(
     )
 
 
-@router.get("/{exercise_id}")
+@router.get("/{exercise_id}", response_model=ApiResponse[Any])
 async def get_exercise(exercise_id: str, session: SessionDep, rid: CurrentRidDep, user: AdminDep):
     svc = ExerciseService(session)
     row = await svc.get_any(exercise_id)
     return ok(ExerciseOut.model_validate(row).model_dump(), request_id=rid)
 
 
-@router.patch("/{exercise_id}")
+@router.patch("/{exercise_id}", response_model=ApiResponse[Any])
 async def update_exercise(
     exercise_id: str,
     body: ExercisePatch,
@@ -110,7 +111,7 @@ async def update_exercise(
     return ok(ExerciseOut.model_validate(row).model_dump(), request_id=rid)
 
 
-@router.delete("/{exercise_id}")
+@router.delete("/{exercise_id}", response_model=ApiResponse[Any])
 async def delete_exercise(
     exercise_id: str, session: SessionDep, rid: CurrentRidDep, user: AdminDep
 ):

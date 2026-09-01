@@ -2,6 +2,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
@@ -17,9 +18,20 @@ from app.infrastructure.runtime import (
     refresh_embedder_config,
     refresh_llm_config,
 )
-from app.routers import admin_exercise, admin_knowledge, admin_model_config, admin_stats, admin_users, chat, code, exercise, knowledge
+from app.routers import (
+    admin_exercise,
+    admin_knowledge,
+    admin_model_config,
+    admin_stats,
+    admin_users,
+    chat,
+    code,
+    exercise,
+    knowledge,
+    mistake,
+)
 from app.routers import auth as auth_router
-from app.routers import mistake
+from app.schemas.common import ApiResponse
 from app.services.model_config_service import ModelConfigService
 
 logger = logging.getLogger(__name__)
@@ -85,7 +97,7 @@ app.include_router(admin_model_config.router)
 app.include_router(admin_stats.router)
 
 
-@app.get("/health")
+@app.get("/health", response_model=ApiResponse[Any])
 async def health(rid: CurrentRidDep):
     """健康检查；`embedder.ready` 即模型就绪状态（前端可据此显示「模型加载中」）。"""
     return ok(
