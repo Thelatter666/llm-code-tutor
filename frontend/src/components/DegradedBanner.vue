@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { UiAlert } from '@/ui'
 
 /**
  * 降级提示条（spec §9「降级必须可见」）。
@@ -41,20 +42,11 @@ const copy = computed(() => {
 </script>
 
 <template>
-  <el-alert
+  <UiAlert
     v-if="copy"
-    class="degraded"
-    type="warning"
-    show-icon
-    :closable="false"
+    variant="warning"
+    class="mb-3"
     :title="copy.title"
     :description="copy.detail"
   />
 </template>
-
-<style scoped>
-.degraded {
-  border-radius: var(--radius-card);
-  margin-bottom: var(--space-3);
-}
-</style>
