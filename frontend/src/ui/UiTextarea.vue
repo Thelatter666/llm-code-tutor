@@ -21,7 +21,7 @@ const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
     :placeholder="props.placeholder"
     :readonly="props.readonly"
     :maxlength="props.maxlength"
-    class="w-full resize-y rounded-ctl border border-line bg-surface px-3 py-2 text-sm text-ink outline-none transition-colors placeholder:text-muted-ink hover:border-line-strong focus:border-brand focus:ring-2 focus:ring-brand/30 disabled:opacity-60"
+    class="box-border w-full resize-y rounded-ctl border border-line bg-surface px-3 py-2 text-sm text-ink outline-none transition-colors placeholder:text-muted-ink hover:border-line-strong focus:border-brand focus:ring-2 focus:ring-brand/30 disabled:opacity-60"
     :class="props.monospace ? 'font-mono' : ''"
     @input="emit('update:modelValue', ($event.target as HTMLTextAreaElement).value)"
   />

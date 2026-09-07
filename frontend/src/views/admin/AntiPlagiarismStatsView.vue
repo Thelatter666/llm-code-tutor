@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import * as adminApi from '@/api/admin'
 import type { AntiPlagiarismStatsOut } from '@/types/admin'
-import { RefreshLeft } from '@element-plus/icons-vue'
 import { onMounted, ref } from 'vue'
+import { UiAlert, UiButton, UiCard, UiIcon } from '@/ui'
 
 /**
  * 防抄袭统计页（spec §7.4，P6 Task 11）。
@@ -41,55 +41,42 @@ onMounted(load)
 </script>
 
 <template>
-  <div v-loading="loading" class="stats-page">
-    <el-alert
-      type="info"
-      show-icon
-      :closable="false"
-      class="stats-page__notice"
+  <div v-loading="loading" class="flex flex-col gap-4">
+    <UiAlert
+      variant="info"
       title="统计口径说明（重要）"
       description="仅统计学生（role=user）发起的答疑请求；拦截率 = 触发防抄袭底线次数 / 总请求数，是度量口径，不是抄袭检出能力。"
     />
 
-    <el-table :data="data?.items ?? []" class="stats-page__table">
-      <el-table-column label="档位" width="180">
-        <template #default="{ row }">{{ MODE_LABELS[row.mode] ?? row.mode }}</template>
-      </el-table-column>
-      <el-table-column label="总请求数" prop="total" width="140" />
-      <el-table-column label="触发底线次数" prop="blocked" width="160" />
-      <el-table-column label="拦截率">
-        <template #default="{ row }">{{ blockRateText(row.total, row.blocked, row.block_rate) }}</template>
-      </el-table-column>
-    </el-table>
+    <UiCard title="各档位统计" :padded="false">
+      <table class="w-full text-sm">
+        <thead class="text-xs text-muted-ink">
+          <tr>
+            <th class="px-3 py-2 text-left font-medium">档位</th>
+            <th class="px-3 py-2 text-left font-medium">总请求数</th>
+            <th class="px-3 py-2 text-left font-medium">触发底线次数</th>
+            <th class="px-3 py-2 text-left font-medium">拦截率</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-line">
+          <tr v-for="row in data?.items ?? []" :key="row.mode">
+            <td class="px-3 py-2">{{ MODE_LABELS[row.mode] ?? row.mode }}</td>
+            <td class="px-3 py-2 text-muted-ink">{{ row.total }}</td>
+            <td class="px-3 py-2 text-muted-ink">{{ row.blocked }}</td>
+            <td class="px-3 py-2">{{ blockRateText(row.total, row.blocked, row.block_rate) }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </UiCard>
 
-    <div v-if="data" class="stats-page__overall">
-      <h3 class="stats-page__title">合计（{{ MODE_LABELS[data.overall.mode] }}）</h3>
-      <p>{{ blockRateText(data.overall.total, data.overall.blocked, data.overall.block_rate) }}</p>
+    <UiCard v-if="data" :title="`合计（${MODE_LABELS[data.overall.mode]}）`">
+      <p class="m-0 text-2xl font-bold text-brand">{{ blockRateText(data.overall.total, data.overall.blocked, data.overall.block_rate) }}</p>
+    </UiCard>
+
+    <div>
+      <UiButton variant="secondary" @click="load">
+        <UiIcon name="RotateCcw" :size="14" />刷新
+      </UiButton>
     </div>
-
-    <el-button class="stats-page__refresh" :icon="RefreshLeft" @click="load">刷新</el-button>
   </div>
 </template>
-
-<style scoped>
-.stats-page__notice {
-  margin-bottom: var(--space-4);
-}
-
-.stats-page__overall {
-  margin-top: var(--space-4);
-  padding: var(--space-4);
-  background: var(--color-card);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-card);
-}
-
-.stats-page__title {
-  margin: 0 0 var(--space-2);
-  font-size: 15px;
-}
-
-.stats-page__refresh {
-  margin-top: var(--space-4);
-}
-</style>

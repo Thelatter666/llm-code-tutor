@@ -8,6 +8,12 @@ Tailwind v4 的 preflight 会给 `button` 强加 `border-style: solid; border-wi
 
 不用「关掉 preflight」这条路：本项目依赖 preflight 提供的 `box-sizing: border-box` 与基础重置，关掉会引起全站布局偏移。
 
+> **P5 修订**：不引 preflight ≠ 不做任何重置。页面全部 Tailwind 化后，工具类普遍假设
+> border-box，实测 `w-full` + 内边距 + 边框的元素（输入框/按钮，登录页最先暴露）会按
+> content-box 溢出容器。故在 `@layer base` 自补**最小重置**：仅 `*, ::before, ::after`
+> 的 `box-sizing: border-box`，不引入 preflight 的 margin / 字体 / 列表重置。
+> 该规则在层内，Element Plus 的无层样式依旧恒胜，共存策略不变。
+
 采用 **CSS 级联层**：把 Tailwind 的三段输出分别放进 `@layer theme / base / utilities`，Element Plus 的 CSS 保持无层（unlayered）。按 CSS 级联规则，**无层样式优先于任何层内样式**，于是：
 
 - `el-button` 等组件样式恒胜 preflight，既有页面零视觉变化；

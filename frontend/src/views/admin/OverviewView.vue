@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import * as adminApi from '@/api/admin'
 import type { OverviewOut } from '@/types/admin'
-import { RefreshLeft } from '@element-plus/icons-vue'
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { UiButton, UiCard, UiIcon } from '@/ui'
 
 /**
  * 仪表盘页（spec §6.2 / 裁定 3 最小集，P6 Task 11）。
@@ -25,7 +25,7 @@ async function load() {
 
 onMounted(load)
 
-function buildCards() {
+const cards = computed<Array<{ label: string; value: number | string }>>(() => {
   const d = data.value
   if (!d) return []
   return [
@@ -42,121 +42,79 @@ function buildCards() {
     { label: '未掌握错题', value: d.mistake_entries.unmastered },
     { label: '审计日志', value: d.audit_logs },
   ]
-}
+})
 </script>
 
 <template>
-  <div v-loading="loading" class="overview-page">
-    <div class="overview-page__cards">
-      <div v-for="card in buildCards()" :key="card.label" class="overview-page__card">
-        <div class="overview-page__value">{{ card.value }}</div>
-        <div class="overview-page__label">{{ card.label }}</div>
+  <div v-loading="loading" class="flex flex-col gap-4">
+    <div class="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3">
+      <div
+        v-for="card in cards"
+        :key="card.label"
+        class="rounded-panel border border-line bg-surface p-4 text-center shadow-panel"
+      >
+        <div class="text-2xl font-bold leading-tight text-brand">{{ card.value }}</div>
+        <div class="mt-1 text-sm text-muted-ink">{{ card.label }}</div>
       </div>
     </div>
 
-    <div class="overview-page__panels">
-      <div class="overview-page__panel">
-        <h3 class="overview-page__title">当前配置</h3>
-        <dl class="overview-page__kv">
-          <div><dt>LLM 提供方</dt><dd>{{ data?.model_config.provider ?? '—' }}</dd></div>
-          <div><dt>模型</dt><dd>{{ data?.model_config.model ?? '—' }}</dd></div>
-          <div><dt>防抄袭档位</dt><dd>{{ data?.model_config.anti_plagiarism_mode ?? '—' }}</dd></div>
-          <div><dt>配置版本 revision</dt><dd>{{ data?.model_config.revision ?? '—' }}</dd></div>
+    <div class="grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-4">
+      <UiCard title="当前配置">
+        <dl class="m-0">
+          <div v-for="row in [
+            ['LLM 提供方', data?.model_config.provider ?? '—'],
+            ['模型', data?.model_config.model ?? '—'],
+            ['防抄袭档位', data?.model_config.anti_plagiarism_mode ?? '—'],
+            ['配置版本 revision', data?.model_config.revision ?? '—'],
+          ]" :key="row[0]" class="flex justify-between border-b border-line py-1 text-sm">
+            <dt class="text-muted-ink">{{ row[0] }}</dt>
+            <dd class="m-0 font-semibold text-ink">{{ row[1] }}</dd>
+          </div>
         </dl>
-      </div>
+      </UiCard>
 
-      <div class="overview-page__panel">
-        <h3 class="overview-page__title">向量化器</h3>
-        <dl class="overview-page__kv">
-          <div><dt>就绪</dt><dd>{{ data?.embedder.ready ? '是' : '否（加载中/降级）' }}</dd></div>
-          <div><dt>实现</dt><dd>{{ data?.embedder.name ?? '—' }}</dd></div>
-          <div><dt>模型</dt><dd>{{ data?.embedder.model ?? '—' }}</dd></div>
-          <div v-if="data?.embedder.error"><dt>错误</dt><dd>{{ data.embedder.error }}</dd></div>
+      <UiCard title="向量化器">
+        <dl class="m-0">
+          <div class="flex justify-between border-b border-line py-1 text-sm">
+            <dt class="text-muted-ink">就绪</dt>
+            <dd class="m-0 font-semibold" :class="data?.embedder.ready ? 'text-highlight' : 'text-danger'">
+              {{ data?.embedder.ready ? '是' : '否（加载中/降级）' }}
+            </dd>
+          </div>
+          <div class="flex justify-between border-b border-line py-1 text-sm">
+            <dt class="text-muted-ink">实现</dt>
+            <dd class="m-0 font-semibold text-ink">{{ data?.embedder.name ?? '—' }}</dd>
+          </div>
+          <div class="flex justify-between border-b border-line py-1 text-sm">
+            <dt class="text-muted-ink">模型</dt>
+            <dd class="m-0 font-semibold text-ink">{{ data?.embedder.model ?? '—' }}</dd>
+          </div>
+          <div v-if="data?.embedder.error" class="flex justify-between py-1 text-sm">
+            <dt class="text-muted-ink">错误</dt>
+            <dd class="m-0 font-semibold text-danger">{{ data.embedder.error }}</dd>
+          </div>
         </dl>
-      </div>
+      </UiCard>
 
-      <div class="overview-page__panel">
-        <h3 class="overview-page__title">用户结构</h3>
-        <dl class="overview-page__kv">
-          <div><dt>管理员</dt><dd>{{ data?.users.admin ?? 0 }}</dd></div>
-          <div><dt>正常状态</dt><dd>{{ data?.users.active ?? 0 }}</dd></div>
-          <div><dt>习题草稿</dt><dd>{{ data?.exercises.draft ?? 0 }}</dd></div>
-          <div><dt>错题条目</dt><dd>{{ data?.mistake_entries.total ?? 0 }}</dd></div>
+      <UiCard title="用户结构">
+        <dl class="m-0">
+          <div v-for="row in [
+            ['管理员', data?.users.admin ?? 0],
+            ['正常状态', data?.users.active ?? 0],
+            ['习题草稿', data?.exercises.draft ?? 0],
+            ['错题条目', data?.mistake_entries.total ?? 0],
+          ]" :key="row[0]" class="flex justify-between border-b border-line py-1 text-sm">
+            <dt class="text-muted-ink">{{ row[0] }}</dt>
+            <dd class="m-0 font-semibold text-ink">{{ row[1] }}</dd>
+          </div>
         </dl>
-      </div>
+      </UiCard>
     </div>
 
-    <el-button class="overview-page__refresh" :icon="RefreshLeft" @click="load">刷新</el-button>
+    <div>
+      <UiButton variant="secondary" @click="load">
+        <UiIcon name="RotateCcw" :size="14" />刷新
+      </UiButton>
+    </div>
   </div>
 </template>
-
-<style scoped>
-.overview-page__cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: var(--space-3);
-  margin-bottom: var(--space-5);
-}
-
-.overview-page__card {
-  background: var(--color-card);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-card);
-  padding: var(--space-4);
-  text-align: center;
-}
-
-.overview-page__value {
-  font-size: 28px;
-  font-weight: 700;
-  color: var(--color-primary);
-}
-
-.overview-page__label {
-  margin-top: var(--space-1);
-  font-size: 13px;
-  color: var(--color-muted-foreground);
-}
-
-.overview-page__panels {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: var(--space-4);
-}
-
-.overview-page__panel {
-  background: var(--color-card);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-card);
-  padding: var(--space-4);
-}
-
-.overview-page__title {
-  margin: 0 0 var(--space-3);
-  font-size: 15px;
-}
-
-.overview-page__kv {
-  margin: 0;
-}
-
-.overview-page__kv > div {
-  display: flex;
-  justify-content: space-between;
-  padding: var(--space-1) 0;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.overview-page__kv dt {
-  color: var(--color-muted-foreground);
-}
-
-.overview-page__kv dd {
-  margin: 0;
-  font-weight: 600;
-}
-
-.overview-page__refresh {
-  margin-top: var(--space-4);
-}
-</style>

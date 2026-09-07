@@ -1,11 +1,24 @@
 <script setup lang="ts">
 import * as adminApi from '@/api/admin'
+import { useConfirm } from '@/composables/useConfirm'
+import { useNotify } from '@/composables/useNotify'
+import { usePagedList } from '@/composables/usePagedList'
 import type { AdminExerciseOut } from '@/types/admin'
 import { TYPE_LABELS } from '@/types/exercise'
 import type { ExerciseType } from '@/types/exercise'
-import { Delete, Plus, RefreshLeft } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
+import {
+  UiBadge,
+  UiButton,
+  UiCard,
+  UiDialog,
+  UiIcon,
+  UiInput,
+  UiPagination,
+  UiRadioGroup,
+  UiSelect,
+  UiTextarea,
+} from '@/ui'
 
 /** 参考答案按题型的 JSON 形态提示（契约定稿 7）。 */
 const ANSWER_PLACEHOLDERS: Record<string, string> = {
@@ -30,45 +43,45 @@ const answerPlaceholder = computed(() => ANSWER_PLACEHOLDERS[form.type] ?? '"…
  * 提交时解析失败会在输入框下方即时提示；后端 422 消息由拦截器弹出。
  */
 
-const items = ref<AdminExerciseOut[]>([])
-const total = ref(0)
-const loading = ref(false)
+const notify = useNotify()
+const confirm = useConfirm()
 
 const filters = reactive({
   type: '' as ExerciseType | '',
   difficulty: '' as number | '',
   knowledgeTag: '',
   status: '' as 'draft' | 'published' | '',
-  page: 1,
   pageSize: 10,
 })
 
-async function load() {
-  loading.value = true
-  try {
-    const { data } = await adminApi.listAdminExercises({
-      type: filters.type,
-      difficulty: filters.difficulty,
-      knowledgeTag: filters.knowledgeTag || undefined,
-      status: filters.status,
-      page: filters.page,
-      pageSize: filters.pageSize,
-    })
-    items.value = data.data?.items ?? []
-    total.value = data.data?.total ?? 0
-  } finally {
-    loading.value = false
-  }
-}
+const list = usePagedList<AdminExerciseOut>(async (page, pageSize) => {
+  const { data } = await adminApi.listAdminExercises({
+    type: filters.type,
+    difficulty: filters.difficulty,
+    knowledgeTag: filters.knowledgeTag || undefined,
+    status: filters.status,
+    page,
+    pageSize,
+  })
+  return { items: data.data?.items ?? [], total: data.data?.total ?? 0 }
+}, filters.pageSize)
 
 function search() {
-  filters.page = 1
-  load()
+  list.reset()
 }
 
-function formatTime(iso: string): string {
-  return `${iso.slice(0, 16).replace('T', ' ')} UTC`
+function onPageSize(size: number) {
+  filters.pageSize = size
+  search()
 }
+
+const typeOptions = Object.entries(TYPE_LABELS).map(([value, label]) => ({ label, value }))
+const difficultyOptions = [1, 2, 3, 4, 5].map((n) => ({ label: `难度 ${n}`, value: n }))
+const statusOptions = [
+  { label: '草稿', value: 'draft' },
+  { label: '已发布', value: 'published' },
+]
+const difficultyButtons = [1, 2, 3, 4, 5].map((n) => ({ label: String(n), value: n }))
 
 // ---------------------------------------------------------------- 新建 / 编辑
 
@@ -170,20 +183,20 @@ async function submit() {
   const body = buildBody()
   if (Object.values(fieldError).some(Boolean)) return
   if (!form.stem.trim()) {
-    ElMessage.warning('请填写题干')
+    notify.warning('请填写题干')
     return
   }
   saving.value = true
   try {
     if (editId.value) {
       await adminApi.updateAdminExercise(editId.value, body)
-      ElMessage.success('已保存')
+      notify.success('已保存')
     } else {
       await adminApi.createAdminExercise(body as never)
-      ElMessage.success('已创建')
+      notify.success('已创建')
     }
     dialog.value = false
-    await load()
+    await list.load()
   } catch {
     // 后端 422（跨题型形状校验等）消息由拦截器弹出
   } finally {
@@ -198,8 +211,8 @@ async function togglePublish(row: AdminExerciseOut) {
   const actionText = target === 'published' ? '发布' : '下架'
   try {
     await adminApi.updateAdminExercise(row.id, { status: target })
-    ElMessage.success(`已${actionText}`)
-    await load()
+    notify.success(`已${actionText}`)
+    await list.load()
   } catch {
     // 后端 4220 消息由拦截器弹出
   }
@@ -207,169 +220,147 @@ async function togglePublish(row: AdminExerciseOut) {
 
 async function removeExercise(row: AdminExerciseOut) {
   const stem = row.stem.split('\n')[0].slice(0, 30)
-  const confirmed = await ElMessageBox.confirm(
-    `删除这道习题将级联删除其全部提交记录与错题条目，且不可恢复。`,
+  const confirmed = await confirm(
+    '删除这道习题将级联删除其全部提交记录与错题条目，且不可恢复。',
     `删除习题：${stem}…`,
-    { type: 'error', confirmButtonText: '删除', cancelButtonText: '取消' },
-  ).catch(() => null)
+  )
   if (!confirmed) return
   try {
     await adminApi.deleteAdminExercise(row.id)
-    ElMessage.success('已删除')
-    await load()
+    notify.success('已删除')
+    await list.load()
   } catch {
     // 后端消息由拦截器弹出
   }
 }
 
-onMounted(load)
+list.load()
 </script>
 
 <template>
-  <div class="ex-admin-page">
-    <div class="ex-admin-page__toolbar">
-      <el-select v-model="filters.type" placeholder="全部题型" clearable class="ex-admin-page__select" @change="search">
-        <el-option v-for="(label, key) in TYPE_LABELS" :key="key" :label="label" :value="key" />
-      </el-select>
-      <el-select v-model="filters.difficulty" placeholder="全部难度" clearable class="ex-admin-page__select" @change="search">
-        <el-option v-for="d in 5" :key="d" :label="`难度 ${d}`" :value="d" />
-      </el-select>
-      <el-input
-        v-model="filters.knowledgeTag"
-        placeholder="知识点标签"
-        clearable
-        class="ex-admin-page__tag"
-        @keyup.enter="search"
-        @clear="search"
-      />
-      <el-select v-model="filters.status" placeholder="全部状态" clearable class="ex-admin-page__select" @change="search">
-        <el-option label="草稿" value="draft" />
-        <el-option label="已发布" value="published" />
-      </el-select>
-      <el-button type="primary" :icon="RefreshLeft" @click="search">刷新</el-button>
-      <el-button type="primary" :icon="Plus" @click="openCreate">新建习题</el-button>
-    </div>
+  <div class="flex flex-col gap-4">
+    <UiCard :padded="false">
+      <div class="flex flex-wrap items-center gap-2 border-b border-line p-3">
+        <div class="w-[140px]">
+          <UiSelect v-model="filters.type" :options="typeOptions" placeholder="全部题型" clearable @update:model-value="search" />
+        </div>
+        <div class="w-[140px]">
+          <UiSelect v-model="filters.difficulty" :options="difficultyOptions" placeholder="全部难度" clearable @update:model-value="search" />
+        </div>
+        <div class="w-[180px]">
+          <UiInput v-model="filters.knowledgeTag" placeholder="知识点标签" @keyup.enter="search" />
+        </div>
+        <div class="w-[140px]">
+          <UiSelect v-model="filters.status" :options="statusOptions" placeholder="全部状态" clearable @update:model-value="search" />
+        </div>
+        <UiButton variant="secondary" @click="search">
+          <UiIcon name="RotateCcw" :size="14" />刷新
+        </UiButton>
+        <UiButton @click="openCreate">
+          <UiIcon name="Plus" :size="14" />新建习题
+        </UiButton>
+      </div>
 
-    <el-table v-loading="loading" :data="items" class="ex-admin-page__table">
-      <el-table-column label="题干" min-width="260">
-        <template #default="{ row }">{{ row.stem.split('\n')[0].slice(0, 40) }}</template>
-      </el-table-column>
-      <el-table-column label="题型" width="110">
-        <template #default="{ row }">{{ TYPE_LABELS[row.type as ExerciseType] }}</template>
-      </el-table-column>
-      <el-table-column label="难度" width="80">
-        <template #default="{ row }">{{ row.difficulty }}</template>
-      </el-table-column>
-      <el-table-column label="知识点" min-width="160">
-        <template #default="{ row }">{{ (row.knowledge_tags ?? []).join('、') || '—' }}</template>
-      </el-table-column>
-      <el-table-column label="来源" width="80">
-        <template #default="{ row }">{{ row.source }}</template>
-      </el-table-column>
-      <el-table-column label="状态" width="90">
-        <template #default="{ row }">
-          <el-tag :type="row.status === 'published' ? 'success' : 'info'" effect="plain">
-            {{ row.status === 'published' ? '已发布' : '草稿' }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="200" fixed="right">
-        <template #default="{ row }">
-          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button link :type="row.status === 'published' ? 'warning' : 'success'" @click="togglePublish(row)">
-            {{ row.status === 'published' ? '下架' : '发布' }}
-          </el-button>
-          <el-button link type="danger" @click="removeExercise(row)">删除</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
+      <div v-loading="list.loading.value" class="overflow-auto">
+        <table class="w-full text-sm">
+          <thead class="text-xs text-muted-ink">
+            <tr>
+              <th class="px-3 py-2 text-left font-medium">题干</th>
+              <th class="px-3 py-2 text-left font-medium">题型</th>
+              <th class="px-3 py-2 text-left font-medium">难度</th>
+              <th class="px-3 py-2 text-left font-medium">知识点</th>
+              <th class="px-3 py-2 text-left font-medium">来源</th>
+              <th class="px-3 py-2 text-left font-medium">状态</th>
+              <th class="px-3 py-2 text-left font-medium">操作</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-line">
+            <tr v-for="row in list.items.value" :key="row.id" class="hover:bg-softer">
+              <td class="max-w-[280px] px-3 py-2">{{ row.stem.split('\n')[0].slice(0, 40) }}</td>
+              <td class="px-3 py-2 text-muted-ink">{{ TYPE_LABELS[row.type as ExerciseType] }}</td>
+              <td class="px-3 py-2 text-muted-ink">{{ row.difficulty }}</td>
+              <td class="px-3 py-2 text-muted-ink">{{ (row.knowledge_tags ?? []).join('、') || '—' }}</td>
+              <td class="px-3 py-2 text-xs text-muted-ink">{{ row.source }}</td>
+              <td class="px-3 py-2">
+                <UiBadge :variant="row.status === 'published' ? 'success' : 'muted'">
+                  {{ row.status === 'published' ? '已发布' : '草稿' }}
+                </UiBadge>
+              </td>
+              <td class="px-3 py-2">
+                <div class="flex flex-wrap gap-1">
+                  <UiButton variant="link" size="sm" @click="openEdit(row)">编辑</UiButton>
+                  <UiButton variant="link" size="sm" @click="togglePublish(row)">
+                    {{ row.status === 'published' ? '下架' : '发布' }}
+                  </UiButton>
+                  <UiButton variant="link" size="sm" @click="removeExercise(row)">删除</UiButton>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
-    <el-pagination
-      v-model:current-page="filters.page"
-      v-model:page-size="filters.pageSize"
-      :total="total"
-      :page-sizes="[10, 20, 50]"
-      layout="total, sizes, prev, pager, next"
-      class="ex-admin-page__pager"
-      @current-change="load"
-      @size-change="search"
-    />
+      <div class="p-3">
+        <UiPagination
+          :page="list.page.value"
+          :total="list.total.value"
+          :page-size="filters.pageSize"
+          :page-sizes="[10, 20, 50]"
+          layout="total, sizes, prev, pager, next"
+          @update:page="list.goto"
+          @update:page-size="onPageSize"
+        />
+      </div>
+    </UiCard>
 
-    <el-dialog v-model="dialog" :title="editId ? '编辑习题' : '新建习题'" width="640px">
-      <el-form label-width="110px" @submit.prevent>
-        <el-form-item label="题型">
-          <el-select v-model="form.type" class="ex-admin-page__mode">
-            <el-option v-for="(label, key) in TYPE_LABELS" :key="key" :label="label" :value="key" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="题干">
-          <el-input v-model="form.stem" type="textarea" :rows="3" />
-        </el-form-item>
-        <el-form-item label="难度">
-          <el-radio-group v-model="form.difficulty">
-            <el-radio-button v-for="d in 5" :key="d" :value="d">{{ d }}</el-radio-button>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-radio-group v-model="form.status">
-            <el-radio value="draft">草稿</el-radio>
-            <el-radio value="published">发布</el-radio>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item v-if="['choice', 'multi'].includes(form.type)" label="选项 options">
-          <el-input v-model="form.optionsText" type="textarea" :rows="3" placeholder='{"A": "选项文本", "B": "…"}' />
-          <div v-if="fieldError.options" class="ex-admin-page__error">{{ fieldError.options }}</div>
-        </el-form-item>
-        <el-form-item label="参考答案 answer">
-          <el-input v-model="form.answerText" type="textarea" :rows="2" :placeholder="answerPlaceholder" />
-          <div v-if="fieldError.answer" class="ex-admin-page__error">{{ fieldError.answer }}</div>
-        </el-form-item>
-        <el-form-item v-if="form.type === 'coding'" label="测试用例 test_cases">
-          <el-input v-model="form.testCasesText" type="textarea" :rows="4" placeholder='{"language": "python", "cases": [{"stdin": "", "expected_stdout": "6"}]}' />
-          <div v-if="fieldError.test_cases" class="ex-admin-page__error">{{ fieldError.test_cases }}</div>
-        </el-form-item>
-        <el-form-item label="解析 explanation">
-          <el-input v-model="form.explanation" type="textarea" :rows="2" />
-        </el-form-item>
-        <el-form-item label="知识点标签">
-          <el-input v-model="form.knowledgeTagsText" placeholder="逗号分隔，如：变量与赋值, 循环" />
-        </el-form-item>
-      </el-form>
+    <UiDialog v-model="dialog" :title="editId ? '编辑习题' : '新建习题'" width="640px">
+      <form class="flex flex-col gap-3" @submit.prevent>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <div class="flex flex-col gap-1">
+            <label class="text-sm text-muted-ink">题型</label>
+            <UiSelect v-model="form.type" :options="typeOptions" />
+          </div>
+          <div class="flex flex-col gap-1">
+            <label class="text-sm text-muted-ink">难度</label>
+            <UiRadioGroup v-model="form.difficulty" :options="difficultyButtons" button size="small" />
+          </div>
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="text-sm text-muted-ink">题干</label>
+          <UiTextarea v-model="form.stem" :rows="3" />
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="text-sm text-muted-ink">状态</label>
+          <UiRadioGroup v-model="form.status" :options="statusOptions" />
+        </div>
+        <div v-if="['choice', 'multi'].includes(form.type)" class="flex flex-col gap-1">
+          <label class="text-sm text-muted-ink">选项 options</label>
+          <UiTextarea v-model="form.optionsText" :rows="3" monospace placeholder='{"A": "选项文本", "B": "…"}' />
+          <p v-if="fieldError.options" class="text-xs text-danger">{{ fieldError.options }}</p>
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="text-sm text-muted-ink">参考答案 answer</label>
+          <UiTextarea v-model="form.answerText" :rows="2" monospace :placeholder="answerPlaceholder" />
+          <p v-if="fieldError.answer" class="text-xs text-danger">{{ fieldError.answer }}</p>
+        </div>
+        <div v-if="form.type === 'coding'" class="flex flex-col gap-1">
+          <label class="text-sm text-muted-ink">测试用例 test_cases</label>
+          <UiTextarea v-model="form.testCasesText" :rows="4" monospace placeholder='{"language": "python", "cases": [{"stdin": "", "expected_stdout": "6"}]}' />
+          <p v-if="fieldError.test_cases" class="text-xs text-danger">{{ fieldError.test_cases }}</p>
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="text-sm text-muted-ink">解析 explanation</label>
+          <UiTextarea v-model="form.explanation" :rows="2" />
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="text-sm text-muted-ink">知识点标签</label>
+          <UiInput v-model="form.knowledgeTagsText" placeholder="逗号分隔，如：变量与赋值, 循环" />
+        </div>
+      </form>
       <template #footer>
-        <el-button @click="dialog = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="submit">{{ editId ? '保存' : '创建' }}</el-button>
+        <UiButton variant="secondary" @click="dialog = false">取消</UiButton>
+        <UiButton :loading="saving" @click="submit">{{ editId ? '保存' : '创建' }}</UiButton>
       </template>
-    </el-dialog>
+    </UiDialog>
   </div>
 </template>
-
-<style scoped>
-.ex-admin-page__toolbar {
-  display: flex;
-  gap: var(--space-2);
-  margin-bottom: var(--space-4);
-  flex-wrap: wrap;
-}
-
-.ex-admin-page__select {
-  width: 140px;
-}
-
-.ex-admin-page__tag {
-  width: 180px;
-}
-
-.ex-admin-page__mode {
-  width: 200px;
-}
-
-.ex-admin-page__pager {
-  margin-top: var(--space-4);
-}
-
-.ex-admin-page__error {
-  color: var(--color-danger);
-  font-size: 12px;
-  line-height: 1.4;
-}
-</style>
