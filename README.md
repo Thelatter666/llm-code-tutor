@@ -245,6 +245,11 @@ Fernet **加密落库**，读取接口一律掩码回显：长度 ≤7 位的短
 5. **受限执行器非沙箱**：见「受限代码执行器 —— 安全边界声明」，不重复展开。
 6. **无数据库迁移框架**：schema 变更即删库重建 + 重新 `make seed`（ADR-0006），
    演示数据均可由 seed 再生。
+7. **前端处于双设计系统共存期**（ADR-0011）：全部页面与登录页已迁到自建 `src/ui/`
+   适配层 + Tailwind v4，模板层已无 `el-*` 组件；但 Element Plus 仍在适配层内部
+   （Select/Dialog/DatePicker 等）与 `v-loading` 指令中服役，完整退场待后续批次
+   （ADR-0012）。应用外壳 chunk 因其引用 el-* 而偏大，`manualChunks` 优化随
+   shadcn-vue 正式接入一并处理。
 
 ## 文档
 
@@ -252,11 +257,11 @@ Fernet **加密落库**，读取接口一律掩码回显：长度 ≤7 位的短
 |---|---|
 | `AGENT.md` | AI 编码助手工作约束（强制） |
 | `CONTEXT.md` | 术语表（Ubiquitous Language，唯一术语来源） |
-| `docs/adr/` | 架构决策记录 0001–0010（含 0002 单 worker、0003 受限执行器资源限制、0004 哨兵嵌入） |
+| `docs/adr/` | 架构决策记录 0001–0012（含 0011 前端技术栈、0012 Tailwind 共存与视觉回归） |
 | `docs/superpowers/specs/` | 设计 spec |
 | `docs/superpowers/plans/` | 各批次实施计划 |
 | `docs/review/` | 各批次完成报告与评审 |
-| `frontend/docs/ui-baseline.md` | 前端 UI 基线（配色 / 间距 / 圆角，强制） |
+| `frontend/docs/ui-baseline.md` | 前端 UI 基线 v2（色彩 / 字阶 / 阴影 / 动效 / 外壳 / 适配层，强制） |
 
 ## 技术栈
 

@@ -160,10 +160,18 @@
 双设计系统共存期（Element Plus 逐步退场）：
 
 - Tailwind 输出进 `@layer theme` / `@layer utilities`；**不引入 preflight**（既有页面依赖
-  浏览器默认 margin，引入重置会引起全站布局偏移；基础重置留到页面改造批次按需自写）
+  浏览器默认 margin，引入重置会引起全站布局偏移）
+- **最小重置仅一条（P5 补）**：`@layer base` 中 `*, ::before, ::after` 的
+  `box-sizing: border-box`。全站页面 Tailwind 化后工具类普遍假设 border-box，缺失会使
+  `w-full` + 内边距 + 边框的元素按 content-box 溢出容器（登录页输入框伸出卡片即此因）
 - Element Plus CSS 保持无层（unlayered）→ 按 CSS 级联规则恒胜层内样式，既有组件不被破坏
 - `main.ts` 引入顺序：`@/styles/index.css` 先，`element-plus/dist/index.css` 后
 - 工具类需强制覆盖 el-* 时使用 Tailwind v4 的 `!` 后缀（例：`bg-brand!`）
+- **加载遮罩统一用 `v-loading` 指令**：它是 Element Plus 全局注册带来的布局原语，
+  共存期内视为豁免，不要求经 `@/ui` 适配（气泡内「生成中…」这类文案态不在此列）
+- **宽度控制**：`UiInput` / `UiSelect` / `UiDatePicker` 等基类自带 `w-full`，调用方需要
+  定宽时用**外层定宽容器**包裹（如 `<div class="w-[140px]">`），不要直接把宽度类传给
+  组件 —— 同层级的 `w-full` 会按 CSS 生成顺序覆盖它，与 DOM 顺序无关
 
 ---
 
@@ -222,6 +230,10 @@ header  h-14   brand + 折叠/菜单触发 + 用户菜单（UiDropdown）
 - [ ] 响应式断点 375 / 768 / 1024 / 1440px 均无溢出
 - [ ] 路由组件已懒加载
 - [ ] `vue-tsc --noEmit` 无类型错误
+- [ ] **（v2）** 页面 / 外壳不直接 import `el-*` 或 `components/ui/*`，一切经 `@/ui`
+- [ ] **（v2）** 通知用 `useNotify`、确认用 `useConfirm`，不直接 import `ElMessage` / `ElMessageBox`
+- [ ] **（v2）** 加载遮罩用 `v-loading`；空态用 `UiEmpty`
+- [ ] **（v2）** 工具栏定宽控件用外层容器包裹（不直接传宽度类，见 §9）
 - [ ] **（v2）** 旧版页面视觉零变化（截图基线比对，14 路由）
 - [ ] **（v2）** `npm test` 全绿、`npm run test:e2e` 冒烟通过
 - [ ] **（v2）** 无新增 `v-html`（`MarkdownView` 是唯一豁免点）
