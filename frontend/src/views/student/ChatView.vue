@@ -4,6 +4,8 @@ import DegradedBanner from '@/components/DegradedBanner.vue'
 import MarkdownView from '@/components/MarkdownView.vue'
 import * as chatApi from '@/api/chat'
 import * as kbApi from '@/api/knowledge'
+import { useConfirm } from '@/composables/useConfirm'
+import { useNotify } from '@/composables/useNotify'
 import { newRequestId, prefersReducedMotion } from '@/composables/useSse'
 import { useAuthStore } from '@/stores/auth'
 import type {
@@ -13,11 +15,9 @@ import type {
   ConversationOut,
 } from '@/types/chat'
 import type { KnowledgeBaseOut } from '@/types/knowledge'
-import { ChatDotRound, Delete, Plus, Promotion, VideoPause } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { UiBadge, UiButton, UiCard, UiCheckbox, UiEmpty, UiIcon, UiSelect, UiTextarea } from '@/ui'
 
-/** 消息气泡的视图模型：服务端行 + 流式过程中的临时状态。 */
 interface Bubble {
   id: string
   role: 'user' | 'assistant'
@@ -25,11 +25,12 @@ interface Bubble {
   citations: Citation[]
   done: ChatDoneEvent | null
   typing: boolean
-  /** 流被中断或异常结束时为 true（spec §8.1） */
   truncated: boolean
 }
 
 const auth = useAuthStore()
+const notify = useNotify()
+const confirm = useConfirm()
 
 const conversations = ref<ConversationOut[]>([])
 const activeId = ref<string | null>(null)
@@ -46,18 +47,8 @@ const listRef = ref<HTMLElement | null>(null)
 const reduceMotion = prefersReducedMotion()
 let typeTimer: number | undefined
 
-/**
- * 「仍在处理中」= 网络流未结束 **或** 打字机队列未排空。
- *
- * 只判 `streaming` 是不够的：网络传输常在 0.1s 内结束，而打字机还要渲染数秒。
- * 若此时放开「发送」，新提问会插进正在渲染的气泡里，随后又被
- * `loadMessages()` 的重载整段覆盖 —— 学生看到的是自己的问题凭空消失。
- */
 const busy = computed(() => streaming.value || pendingText.value.length > 0)
-
 const canSend = computed(() => input.value.trim().length > 0 && !busy.value)
-
-// ---------------------------------------------------------------- 打字机
 
 function stopTypewriter() {
   if (typeTimer !== undefined) {
@@ -65,7 +56,6 @@ function stopTypewriter() {
     typeTimer = undefined
   }
 }
-
 function startTypewriter() {
   stopTypewriter()
   if (reduceMotion) return
@@ -81,7 +71,6 @@ function startTypewriter() {
     }
   }, 18)
 }
-
 function appendDelta(delta: string) {
   const last = bubbles.value[bubbles.value.length - 1]
   if (!last || last.role !== 'assistant') return
@@ -91,26 +80,21 @@ function appendDelta(delta: string) {
   }
   pendingText.value += delta
 }
-
 async function waitForDrain() {
   while (pendingText.value) {
     await new Promise((resolve) => window.setTimeout(resolve, 30))
   }
 }
 
-// ---------------------------------------------------------------- 会话
-
 async function loadConversations() {
   const { data } = await chatApi.listConversations()
   conversations.value = data.data ?? []
 }
-
 async function selectConversation(id: string) {
   if (busy.value) return
   activeId.value = id
   await loadMessages(id)
 }
-
 async function loadMessages(id: string) {
   const { data } = await chatApi.listMessages(id)
   bubbles.value = (data.data ?? []).map((m) => ({
@@ -124,7 +108,6 @@ async function loadMessages(id: string) {
   }))
   scrollToBottom()
 }
-
 async function newConversation() {
   if (busy.value) return
   const { data } = await chatApi.createConversation()
@@ -133,14 +116,9 @@ async function newConversation() {
   await loadConversations()
   await selectConversation(conv.id)
 }
-
 async function removeConversation(conv: ConversationOut) {
   if (busy.value) return
-  await ElMessageBox.confirm(`删除会话「${conv.title}」？该操作不可恢复。`, '删除会话', {
-    type: 'warning',
-    confirmButtonText: '删除',
-    cancelButtonText: '取消',
-  })
+  if (!(await confirm(`删除会话「${conv.title}」？该操作不可恢复。`, '删除会话'))) return
   await chatApi.deleteConversation(conv.id)
   if (activeId.value === conv.id) {
     activeId.value = null
@@ -148,7 +126,6 @@ async function removeConversation(conv: ConversationOut) {
   }
   await loadConversations()
 }
-
 function scrollToBottom() {
   nextTick(() => {
     const el = listRef.value
@@ -156,12 +133,9 @@ function scrollToBottom() {
   })
 }
 
-// ---------------------------------------------------------------- 发送与中断
-
 async function send() {
   const text = input.value.trim()
   if (!text || !canSend.value) return
-
   if (!activeId.value) await newConversation()
   const conversationId = activeId.value
   if (!conversationId) return
@@ -210,13 +184,13 @@ async function send() {
       onError: (err: ChatErrorEvent) => {
         assistant.typing = false
         assistant.truncated = true
-        if (err.code === 4990) ElMessage.info('已中断生成')
-        else ElMessage.error(err.message || '生成失败')
+        if (err.code === 4990) notify.info('已中断生成')
+        else notify.error(err.message || '生成失败')
       },
     })
   } catch (e) {
     assistant.typing = false
-    ElMessage.error((e as Error).message)
+    notify.error((e as Error).message)
   } finally {
     streaming.value = false
     await waitForDrain()
@@ -230,11 +204,13 @@ async function stop() {
   if (!activeId.value || !requestId.value) return
   try {
     const { data } = await chatApi.stopGeneration(activeId.value, requestId.value)
-    if (data.data && !data.data.cancelled) ElMessage.info('该请求已结束，无需中断')
+    if (data.data && !data.data.cancelled) notify.info('该请求已结束，无需中断')
   } catch (e) {
-    ElMessage.error((e as Error).message)
+    notify.error((e as Error).message)
   }
 }
+
+const kbOptions = computed(() => bases.value.map((b) => ({ label: b.name, value: b.id })))
 
 onMounted(async () => {
   await loadConversations()
@@ -245,74 +221,91 @@ onMounted(async () => {
     bases.value = []
   }
 })
-
 onUnmounted(stopTypewriter)
 </script>
 
 <template>
-  <div class="chat">
-    <aside class="chat__side">
-      <el-button class="chat__new" type="primary" :icon="Plus" @click="newConversation">
+  <div class="flex h-full min-h-0 flex-col gap-4 lg:flex-row">
+    <!-- 左侧会话列表面板 -->
+    <aside class="flex w-full shrink-0 flex-col gap-3 rounded-panel border border-line bg-surface p-3 lg:w-60">
+      <UiButton class="w-full" @click="newConversation">
+        <UiIcon name="Plus" :size="14" />
         新建会话
-      </el-button>
-      <ul class="chat__list">
+      </UiButton>
+      <ul class="m-0 flex list-none flex-col gap-1 p-0">
         <li v-for="conv in conversations" :key="conv.id">
           <div
-            class="chat__item"
-            :class="{ 'chat__item--active': conv.id === activeId }"
+            class="group flex cursor-pointer items-center gap-2 rounded-ctl px-2 py-2 text-sm text-ink transition-colors hover:bg-softer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+            :class="conv.id === activeId ? 'bg-softer font-semibold text-brand' : ''"
             role="button"
             tabindex="0"
             @click="selectConversation(conv.id)"
             @keydown.enter="selectConversation(conv.id)"
           >
-            <el-icon class="chat__item-icon"><ChatDotRound /></el-icon>
-            <span class="chat__item-title">{{ conv.title }}</span>
-            <el-button
-              link
-              class="chat__item-del"
-              :icon="Delete"
+            <UiIcon name="MessagesSquare" :size="16" class="shrink-0 text-brand" />
+            <span class="min-w-0 flex-1 truncate">{{ conv.title }}</span>
+            <UiButton
+              variant="ghost"
+              size="icon-sm"
+              class="opacity-0 transition-opacity group-hover:opacity-100"
               @click.stop="removeConversation(conv)"
-            />
+              aria-label="删除会话"
+            >
+              <UiIcon name="Trash2" :size="14" />
+            </UiButton>
           </div>
         </li>
       </ul>
-      <p v-if="!conversations.length" class="chat__empty">还没有会话，点上方按钮开始</p>
+      <p v-if="!conversations.length" class="text-sm text-muted-ink">还没有会话，点上方按钮开始</p>
     </aside>
 
-    <section class="chat__panel">
-      <div class="chat__settings">
-        <el-checkbox v-model="useRag" :disabled="streaming">启用知识库增强（RAG）</el-checkbox>
-        <el-select
-          v-if="useRag"
-          v-model="selectedKb"
-          multiple
-          collapse-tags
-          collapse-tags-tooltip
-          clearable
-          placeholder="不限知识库"
-          :disabled="streaming"
-          class="chat__kb"
-        >
-          <el-option v-for="b in bases" :key="b.id" :label="b.name" :value="b.id" />
-        </el-select>
-        <span class="chat__hint">答疑入口固定为「求答案」意图，受防抄袭档位约束</span>
-      </div>
+    <!-- 右侧对话面板 -->
+    <UiCard class="flex min-h-0 flex-1 flex-col">
+      <template #header>
+        <div class="flex flex-wrap items-center gap-3">
+          <UiCheckbox v-model="useRag" :disabled="streaming">启用知识库增强（RAG）</UiCheckbox>
+          <UiSelect
+            v-if="useRag"
+            v-model="selectedKb"
+            :options="kbOptions"
+            multiple
+            collapse-tags
+            clearable
+            placeholder="不限知识库"
+            :disabled="streaming"
+            class="min-w-[220px]"
+          />
+          <span class="text-sm text-muted-ink">答疑入口固定为「求答案」意图，受防抄袭档位约束</span>
+        </div>
+      </template>
 
-      <div ref="listRef" class="chat__messages">
-        <el-empty v-if="!bubbles.length" description="输入你的编程问题，开始答疑" />
-        <div v-for="b in bubbles" :key="b.id" class="bubble" :class="`bubble--${b.role}`">
-          <div class="bubble__role">{{ b.role === 'user' ? '我' : 'AI 助教' }}</div>
-          <div class="bubble__body">
+      <div ref="listRef" class="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-2">
+        <UiEmpty v-if="!bubbles.length" description="输入你的编程问题，开始答疑" icon="MessageSquare" />
+
+        <div
+          v-for="b in bubbles"
+          :key="b.id"
+          class="flex gap-3"
+          :class="b.role === 'user' ? 'flex-row-reverse' : ''"
+        >
+          <div
+            class="w-14 shrink-0 text-sm text-muted-ink"
+            :class="b.role === 'user' ? 'text-left' : 'text-right'"
+          >
+            {{ b.role === 'user' ? '我' : 'AI 助教' }}
+          </div>
+          <div
+            class="max-w-[min(760px,80%)] rounded-panel px-4 py-3 text-sm leading-relaxed"
+            :class="b.role === 'user' ? 'bg-brand text-brand-fg' : 'bg-softer text-ink'"
+          >
             <div v-if="b.typing && !b.content" class="typing" aria-label="正在生成">
               <span></span><span></span><span></span>
             </div>
-            <!-- AI 回答是 Markdown（经消毒渲染，见 MarkdownView）；学生消息保持纯文本 -->
             <template v-else-if="b.content">
               <MarkdownView v-if="b.role === 'assistant'" :content="b.content" />
-              <pre v-else class="bubble__text">{{ b.content }}</pre>
+              <pre v-else class="m-0 whitespace-pre-wrap break-words font-sans">{{ b.content }}</pre>
             </template>
-            <!-- 中断发生在一个增量都没吐出时：不给一个空气泡，明确说明发生了什么 -->
-            <p v-else-if="b.truncated" class="bubble__interrupted">（已中断，未生成内容）</p>
+            <p v-else-if="b.truncated" class="m-0 text-sm text-muted-ink">（已中断，未生成内容）</p>
 
             <DegradedBanner
               v-if="b.done?.degraded"
@@ -320,227 +313,46 @@ onUnmounted(stopTypewriter)
               :fallback-reason="b.done.fallback_reason"
             />
             <CitationList v-if="b.citations.length" :citations="b.citations" />
-            <div v-if="b.done" class="bubble__meta">
-              <el-tag size="small" effect="plain" type="info">{{ b.done.provider }}</el-tag>
-              <el-tag v-if="b.done.usage_estimated" size="small" effect="plain" type="warning">
-                估算用量
-              </el-tag>
+            <div v-if="b.done" class="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted-ink">
+              <UiBadge variant="info">{{ b.done.provider }}</UiBadge>
+              <UiBadge v-if="b.done.usage_estimated" variant="warning">估算用量</UiBadge>
               <span>{{ b.done.token_usage.total_tokens }} tokens</span>
               <span>{{ b.done.rag_hit ? '知识库命中' : '未命中知识库' }}</span>
             </div>
-            <div v-if="b.typing && b.content" class="bubble__meta">生成中…</div>
+            <div v-if="b.typing && b.content" class="mt-2 text-sm text-muted-ink">生成中…</div>
           </div>
         </div>
       </div>
 
-      <div class="chat__composer">
-        <el-input
+      <template #footer>
+        <UiTextarea
           v-model="input"
-          type="textarea"
           :rows="3"
-          resize="none"
-          maxlength="8000"
+          :maxlength="8000"
           placeholder="例如：讲讲排序算法；或者「闭包是什么」"
           @keydown.enter.exact.prevent="send"
         />
-        <div class="chat__actions">
-          <el-button v-if="streaming" :icon="VideoPause" @click="stop">停止生成</el-button>
-          <el-button type="primary" :icon="Promotion" :disabled="!canSend" @click="send">
+        <div class="mt-2 flex justify-end gap-2">
+          <UiButton v-if="streaming" variant="secondary" @click="stop">
+            <UiIcon name="Pause" :size="14" />
+            停止生成
+          </UiButton>
+          <UiButton :disabled="!canSend" @click="send">
+            <UiIcon name="Send" :size="14" />
             发送
-          </el-button>
+          </UiButton>
         </div>
-      </div>
-    </section>
+      </template>
+    </UiCard>
   </div>
 </template>
 
 <style scoped>
-.chat {
-  display: flex;
-  gap: var(--space-4);
-  height: 100%;
-  min-height: 0;
-}
-
-.chat__side {
-  width: 240px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-4);
-  background: var(--color-card);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-card);
-  overflow: auto;
-}
-
-.chat__new {
-  width: 100%;
-  border-radius: var(--radius-control);
-}
-
-.chat__list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.chat__item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2);
-  border-radius: var(--radius-control);
-  cursor: pointer;
-  transition: background 200ms ease;
-}
-
-.chat__item:hover {
-  background: var(--color-muted);
-}
-
-.chat__item:focus-visible {
-  outline: 2px solid var(--color-ring);
-  outline-offset: 2px;
-}
-
-.chat__item--active {
-  background: var(--color-muted);
-  color: var(--color-primary);
-  font-weight: 600;
-}
-
-.chat__item-icon {
-  flex-shrink: 0;
-  color: var(--color-primary);
-}
-
-.chat__item-title {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-}
-
-.chat__item-del {
-  opacity: 0;
-  transition: opacity 200ms ease;
-}
-
-.chat__item:hover .chat__item-del {
-  opacity: 1;
-}
-
-.chat__empty {
-  color: var(--color-muted-foreground);
-  font-size: 13px;
-}
-
-.chat__panel {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-4);
-  background: var(--color-card);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-card);
-}
-
-.chat__settings {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-}
-
-.chat__kb {
-  min-width: 220px;
-}
-
-.chat__hint {
-  font-size: 13px;
-  color: var(--color-muted-foreground);
-}
-
-.chat__messages {
-  flex: 1;
-  min-height: 240px;
-  overflow: auto;
-  padding: var(--space-2);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-.bubble {
-  display: flex;
-  gap: var(--space-3);
-}
-
-.bubble--user {
-  flex-direction: row-reverse;
-}
-
-.bubble__role {
-  flex-shrink: 0;
-  width: 56px;
-  font-size: 13px;
-  color: var(--color-muted-foreground);
-  text-align: right;
-}
-
-.bubble--user .bubble__role {
-  text-align: left;
-}
-
-.bubble__body {
-  max-width: min(760px, 80%);
-  padding: var(--space-4);
-  border-radius: var(--radius-card);
-  background: var(--color-muted);
-}
-
-.bubble--user .bubble__body {
-  background: var(--color-primary);
-  color: var(--color-on-primary);
-}
-
-.bubble__text {
-  margin: 0;
-  font-size: 14px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.bubble__interrupted {
-  margin: 0;
-  font-size: 13px;
-  color: var(--color-muted-foreground);
-}
-
-.bubble__meta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
-  font-size: 13px;
-  color: var(--color-muted-foreground);
-}
-
-/* 基线 §1：三点脉冲打字指示器 */
+/* 基线 §1：三点脉冲打字指示器（仅这一处用 animation） */
 .typing {
   display: inline-flex;
-  gap: var(--space-1);
+  gap: 4px;
 }
-
 .typing span {
   width: 6px;
   height: 6px;
@@ -548,19 +360,14 @@ onUnmounted(stopTypewriter)
   background: var(--color-primary);
   animation: pulse 1.2s ease-in-out infinite;
 }
-
 .typing span:nth-child(2) {
   animation-delay: 0.15s;
 }
-
 .typing span:nth-child(3) {
   animation-delay: 0.3s;
 }
-
 @keyframes pulse {
-  0%,
-  60%,
-  100% {
+  0%, 60%, 100% {
     opacity: 0.25;
     transform: translateY(0);
   }
@@ -569,22 +376,9 @@ onUnmounted(stopTypewriter)
     transform: translateY(-3px);
   }
 }
-
-.chat__composer {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.chat__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-2);
-}
-
-@media (max-width: 1023px) {
-  .chat__side {
-    display: none;
+@media (prefers-reduced-motion: reduce) {
+  .typing span {
+    animation: none;
   }
 }
 </style>
