@@ -8,10 +8,13 @@ const badgeVariants = cva(
   {
     variants: {
       variant: {
-        primary: 'bg-brand/10 text-brand',
+        // 不用 bg-brand/10：brand 是 var(--color-*)，Tailwind v4 的透明度修饰符对变量色不可靠
+        primary: 'bg-violet-50 text-violet-700',
         warning: 'bg-amber-100 text-amber-800',
         muted: 'bg-softer text-muted-ink',
         danger: 'bg-red-100 text-red-700',
+        info: 'bg-sky-50 text-sky-700',
+        success: 'bg-emerald-50 text-emerald-700',
       },
     },
     defaultVariants: { variant: 'muted' },

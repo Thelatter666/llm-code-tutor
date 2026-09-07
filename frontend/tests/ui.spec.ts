@@ -7,6 +7,10 @@ import { describe, expect, it } from 'vitest'
 import { cn } from '@/lib/utils'
 import UiBadge from '@/ui/UiBadge.vue'
 import UiButton from '@/ui/UiButton.vue'
+import UiCard from '@/ui/UiCard.vue'
+import UiAlert from '@/ui/UiAlert.vue'
+import UiEmpty from '@/ui/UiEmpty.vue'
+import UiTextarea from '@/ui/UiTextarea.vue'
 import UiIcon from '@/ui/UiIcon.vue'
 
 describe('cn()', () => {
@@ -54,5 +58,31 @@ describe('UiIcon', () => {
   })
   it('未知名称不抛错（fallback）', () => {
     expect(() => mount(UiIcon, { props: { name: 'Nope' } })).not.toThrow()
+  })
+})
+
+describe('P3 新增适配层', () => {
+  it('UiCard 渲染 title 头与默认插槽', () => {
+    const w = mount(UiCard, { props: { title: '静态报告' }, slots: { default: '<p>body</p>' } })
+    expect(w.find('h3').text()).toBe('静态报告')
+    expect(w.html()).toContain('body')
+  })
+
+  it('UiAlert 渲染 variant 对应 class', () => {
+    const w = mount(UiAlert, { props: { variant: 'error', title: '语法错误' } })
+    expect(w.classes()).toContain('text-red-700')
+    expect(w.text()).toContain('语法错误')
+  })
+
+  it('UiEmpty 渲染 description', () => {
+    const w = mount(UiEmpty, { props: { description: '暂无数据' } })
+    expect(w.text()).toContain('暂无数据')
+  })
+
+  it('UiTextarea v-model 双向绑定', async () => {
+    const w = mount(UiTextarea, { props: { modelValue: 'init' } })
+    expect((w.find('textarea').element as HTMLTextAreaElement).value).toBe('init')
+    await w.setValue('next')
+    expect(w.emitted('update:modelValue')?.[0]).toEqual(['next'])
   })
 })
