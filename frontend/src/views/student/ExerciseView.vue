@@ -4,6 +4,7 @@ import CodeEditor from '@/components/CodeEditor.vue'
 import CitationList from '@/components/CitationList.vue'
 import DegradedBanner from '@/components/DegradedBanner.vue'
 import MarkdownView from '@/components/MarkdownView.vue'
+import { useNotify } from '@/composables/useNotify'
 import { newRequestId } from '@/composables/useSse'
 import type { Citation } from '@/types/chat'
 import type { RunStatus } from '@/types/code'
@@ -18,10 +19,23 @@ import type {
   SubmitOut,
 } from '@/types/exercise'
 import { TYPE_LABELS } from '@/types/exercise'
-import { MagicStick, Promotion, VideoPause } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import {
+  UiAlert,
+  UiBadge,
+  UiButton,
+  UiCard,
+  UiCheckboxGroup,
+  UiCollapse,
+  UiEmpty,
+  UiIcon,
+  UiInput,
+  UiPagination,
+  UiRadioGroup,
+  UiSelect,
+  UiTextarea,
+} from '@/ui'
 
 /**
  * 习题练习页（spec §5.1 判题四路 / §6.2 exercise 行 / §7.1 双意图辅导）。
@@ -36,11 +50,9 @@ import { useRoute } from 'vue-router'
 
 const PAGE_SIZE = 20
 
-/**
- * 支持错题本深链：`/exercises?focus=<exercise_id>` 直接打开指定习题
- * （推荐清单与错题条目里的「去做这道习题」走的就是它）。
- */
+/** 支持错题本深链：`/exercises?focus=<exercise_id>` 直接打开指定习题。 */
 const route = useRoute()
+const notify = useNotify()
 
 const items = ref<ExerciseListItem[]>([])
 const total = ref(0)
@@ -64,11 +76,7 @@ interface HintState {
 }
 const hint = ref<HintState>({ intent: null, text: '', citations: [], done: null, streaming: false })
 let hintAbort: AbortController | null = null
-/**
- * 辅导请求的身份计数：`intent` 只有两个取值，用它判定「这条流还是不是当前流」
- * 会让迟到的 abort rejection 把新流的 streaming 置 false。切题、卸载都会中止旧流，
- * 那些路径不该弹「已停止生成」—— 用户根本没点停止。
- */
+/** 身份计数：切题与卸载都会中止旧流，那些路径不该弹「已停止生成」。 */
 let hintSeq = 0
 
 // ---------------------------------------------------------------- 列表
@@ -109,6 +117,16 @@ onMounted(async () => {
 })
 
 const optionKeys = computed(() => Object.keys(detail.value?.options ?? {}).sort())
+const choiceOptions = computed(() => optionKeys.value.map((k) => ({ label: k, value: k })))
+
+const typeOptions = Object.entries(TYPE_LABELS).map(([value, label]) => ({ label, value }))
+const difficultyOptions = [1, 2, 3, 4, 5].map((n) => ({ label: `难度 ${n}`, value: n }))
+const tagOptions = computed(() => facets.value.map((t) => ({ label: t, value: t })))
+
+function onPage(next: number) {
+  page.value = next
+  void loadList()
+}
 
 const codingLanguage = computed<'python' | 'javascript'>(() =>
   detail.value?.language === 'javascript' ? 'javascript' : 'python',
@@ -144,7 +162,7 @@ async function submit() {
     const { data } = await exerciseApi.submitExercise(detail.value.id, answerPayload.value)
     result.value = data.data
     if (!result.value) return
-    ElMessage.success(
+    notify.success(
       result.value.is_correct ? `回答正确，得分 ${result.value.score}` : `得分 ${result.value.score}`,
     )
   } finally {
@@ -156,8 +174,7 @@ const judgeCases = computed<JudgeCase[]>(() => result.value?.judge_detail?.cases
 
 /**
  * 执行状态与「是否通过」是两个维度：`status=accepted` 只说明程序正常退出，
- * 输出对不上仍然不通过。直接把英文状态投给学生会出现红色的「accepted」，
- * 读起来像通过了。文案与 P4 编辑器页同源。
+ * 输出对不上仍然不通过。文案与 P4 编辑器页同源。
  */
 const CASE_STATUS_LABEL: Record<RunStatus, string> = {
   accepted: '输出与期望不符',
@@ -201,7 +218,7 @@ function displayAnswer(value: AnswerValue): string {
 // ---------------------------------------------------------------- hint（SSE）
 
 function resetHint() {
-  hintSeq += 1  // 让在途流的收尾全部失效（切题与卸载都不该弹「已停止生成」）
+  hintSeq += 1
   hintAbort?.abort()
   hintAbort = null
   hint.value = { intent: null, text: '', citations: [], done: null, streaming: false }
@@ -210,7 +227,7 @@ function resetHint() {
 async function askHint(intent: HintIntent) {
   if (!detail.value || hint.value.streaming) return
   if (intent === 'review_my_code' && !hasAnswer.value) {
-    ElMessage.warning('「批改我的作答」需要先在作答区写出内容')
+    notify.warning('「批改我的作答」需要先在作答区写出内容')
     return
   }
   const exerciseId = detail.value.id
@@ -234,16 +251,15 @@ async function askHint(intent: HintIntent) {
       },
       onError: (err) => {
         if (seq !== hintSeq) return
-        // 4990 是学生主动中断，不是服务端故障（spec §6.1）：只收尾，不弹红色错误
-        if (err.code === 4990) ElMessage.info('已中断生成')
-        else ElMessage.error(err.message || '辅导生成失败')
+        if (err.code === 4990) notify.info('已中断生成')
+        else notify.error(err.message || '辅导生成失败')
       },
     })
   } catch (e) {
     const err = e as Error
     if (seq !== hintSeq) return
-    if (err.name === 'AbortError') ElMessage.info('已停止生成')
-    else ElMessage.error(err.message)
+    if (err.name === 'AbortError') notify.info('已停止生成')
+    else notify.error(err.message)
   } finally {
     if (seq === hintSeq) {
       hint.value.streaming = false
@@ -253,7 +269,6 @@ async function askHint(intent: HintIntent) {
 }
 
 function stopHint() {
-  // 只有这条路径是「用户点了停止」：不推进 seq，让本流的 catch 正常提示
   hintAbort?.abort()
 }
 
@@ -266,522 +281,204 @@ const hintMockProvider = computed(() => hint.value.done?.provider === 'mock')
 </script>
 
 <template>
-  <div class="exercises">
-    <section class="pane pane--list">
-      <header class="pane__head">
-        <h2 class="pane__title">习题练习</h2>
-        <p class="pane__hint">按题型、难度与知识点筛选，作答后提交判分。</p>
-      </header>
+  <div class="grid items-start gap-4 lg:grid-cols-[minmax(280px,360px)_minmax(0,1fr)]">
+    <!-- 列表 -->
+    <UiCard>
+      <template #header>
+        <div class="flex flex-col gap-1">
+          <h2 class="text-md font-bold text-ink">习题练习</h2>
+          <p class="text-sm text-muted-ink">按题型、难度与知识点筛选，作答后提交判分。</p>
+        </div>
+      </template>
 
-      <div class="filters">
-        <el-select v-model="filterType" size="small" placeholder="全部题型" clearable>
-          <el-option
-            v-for="(label, value) in TYPE_LABELS"
-            :key="value"
-            :label="label"
-            :value="value"
-          />
-        </el-select>
-        <el-select v-model="filterDifficulty" size="small" placeholder="全部难度" clearable>
-          <el-option v-for="level in [1, 2, 3, 4, 5]" :key="level" :label="`难度 ${level}`" :value="level" />
-        </el-select>
-        <el-select v-model="filterTag" size="small" placeholder="全部知识点" clearable filterable>
-          <el-option v-for="tag in facets" :key="tag" :label="tag" :value="tag" />
-        </el-select>
+      <div class="flex flex-wrap gap-2">
+        <UiSelect v-model="filterType" :options="typeOptions" placeholder="全部题型" clearable class="w-[130px]" />
+        <UiSelect v-model="filterDifficulty" :options="difficultyOptions" placeholder="全部难度" clearable class="w-[130px]" />
+        <UiSelect v-model="filterTag" :options="tagOptions" placeholder="全部知识点" clearable class="w-[130px]" />
       </div>
 
-      <ul class="list">
+      <ul class="mt-3 flex max-h-[60vh] list-none flex-col gap-2 overflow-auto p-0">
         <li v-for="item in items" :key="item.id">
           <button
             type="button"
-            class="card"
-            :class="{ 'card--active': detail?.id === item.id }"
+            class="flex w-full flex-col gap-2 rounded-ctl border px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+            :class="detail?.id === item.id ? 'border-brand bg-softer' : 'border-line bg-surface hover:bg-softer'"
             @click="selectExercise(item.id)"
           >
-            <span class="card__tags">
-              <el-tag size="small" effect="plain">{{ TYPE_LABELS[item.type] }}</el-tag>
-              <el-tag size="small" type="info" effect="plain">难度 {{ item.difficulty }}</el-tag>
-              <el-tag
-                v-for="tag in item.knowledge_tags"
-                :key="tag"
-                size="small"
-                type="warning"
-                effect="plain"
-              >
-                {{ tag }}
-              </el-tag>
+            <span class="flex flex-wrap gap-1">
+              <UiBadge>{{ TYPE_LABELS[item.type] }}</UiBadge>
+              <UiBadge variant="info">难度 {{ item.difficulty }}</UiBadge>
+              <UiBadge v-for="tag in item.knowledge_tags" :key="tag" variant="warning">{{ tag }}</UiBadge>
             </span>
-            <span class="card__stem">{{ item.stem }}</span>
+            <span class="line-clamp-3 whitespace-pre-wrap text-muted-ink">{{ item.stem }}</span>
           </button>
         </li>
-        <li v-if="!items.length" class="list__empty">当前筛选条件下没有可练习的习题。</li>
+        <li v-if="!items.length" class="text-sm text-muted-ink">当前筛选条件下没有可练习的习题。</li>
       </ul>
 
-      <el-pagination
+      <UiPagination
         v-if="total > PAGE_SIZE"
-        layout="prev, pager, next, total"
-        :page-size="PAGE_SIZE"
-        :current-page="page"
+        class="mt-3"
+        :page="page"
         :total="total"
-        @current-change="
-          (next: number) => {
-            page = next
-            void loadList()
-          }
-        "
+        :page-size="PAGE_SIZE"
+        @update:page="onPage"
       />
-    </section>
+    </UiCard>
 
-    <section class="pane pane--answer">
-      <div v-if="!detail" class="list__empty">请从左侧选择一道习题。</div>
+    <!-- 作答区 -->
+    <UiCard v-if="!detail">
+      <UiEmpty description="请从左侧选择一道习题。" icon="BookOpen" />
+    </UiCard>
 
-      <template v-else>
-        <header class="pane__head">
-          <h2 class="pane__title">作答区</h2>
-          <p class="stem">{{ detail.stem }}</p>
-        </header>
-
-        <div v-if="optionKeys.length" class="options">
-          <div v-for="key in optionKeys" :key="key" class="options__row">
-            <span class="options__key">{{ key }}</span>
-            <span>{{ detail.options?.[key] }}</span>
-          </div>
+    <UiCard v-else>
+      <template #header>
+        <div class="flex flex-col gap-1">
+          <h2 class="text-md font-bold text-ink">作答区</h2>
+          <p class="m-0 whitespace-pre-wrap break-words text-sm leading-relaxed text-ink">{{ detail.stem }}</p>
         </div>
-
-        <div class="answer">
-          <el-radio-group v-if="detail.type === 'choice'" v-model="draft.choice">
-            <el-radio v-for="key in optionKeys" :key="key" :value="key">{{ key }}</el-radio>
-          </el-radio-group>
-
-          <el-checkbox-group v-else-if="detail.type === 'multi'" v-model="draft.multi">
-            <el-checkbox v-for="key in optionKeys" :key="key" :value="key">{{ key }}</el-checkbox>
-          </el-checkbox-group>
-
-          <el-input
-            v-else-if="detail.type === 'blank'"
-            v-model="draft.blank"
-            placeholder="填写答案"
-            clearable
-          />
-
-          <el-input
-            v-else-if="detail.type === 'short'"
-            v-model="draft.short"
-            type="textarea"
-            :rows="6"
-            placeholder="写下你的解答"
-          />
-
-          <div v-else-if="detail.type === 'coding'" class="answer__coding">
-            <CodeEditor
-              :key="detail.id"
-              v-model="draft.coding"
-              :language="codingLanguage"
-            />
-          </div>
-
-          <div class="answer__actions">
-            <el-button
-              type="primary"
-              :icon="Promotion"
-              :disabled="!hasAnswer || submitting || hint.streaming"
-              :loading="submitting"
-              @click="submit"
-            >
-              提交判分
-            </el-button>
-            <el-button
-              :icon="MagicStick"
-              :disabled="hint.streaming"
-              @click="askHint('seek_answer')"
-            >
-              获取思路
-            </el-button>
-            <el-button
-              :disabled="!hasAnswer || hint.streaming"
-              :title="hasAnswer ? '' : '需要先在作答区写出内容'"
-              @click="askHint('review_my_code')"
-            >
-              批改我的作答
-            </el-button>
-            <el-button v-if="hint.streaming" :icon="VideoPause" @click="stopHint">
-              停止生成
-            </el-button>
-            <router-link v-if="result && result.is_correct === false" to="/mistakes" class="inline-link">
-              已计入错题本，去看看薄弱知识点
-            </router-link>
-          </div>
-        </div>
-
-        <!-- 判分结果：提交后才揭示正确答案与解析 -->
-        <section v-if="result" class="result">
-          <h3 class="result__head">
-            判分结果
-            <el-tag :type="result.is_correct ? 'success' : 'danger'" effect="dark" size="small">
-              {{ result.is_correct ? '回答正确' : '回答错误' }}
-            </el-tag>
-            <el-tag type="info" effect="plain" size="small">得分 {{ result.score }}</el-tag>
-            <el-tag v-if="aiScoreLabel" type="warning" effect="plain" size="small">
-              {{ aiScoreLabel }}
-            </el-tag>
-            <el-tag effect="plain" size="small">第 {{ result.attempt_no }} 次作答</el-tag>
-          </h3>
-
-          <el-alert
-            v-if="result.judge_detail?.budget_exceeded"
-            type="warning"
-            show-icon
-            :closable="false"
-            :title="`用例执行累计超过 ${budgetLimit} 秒，剩余用例已中止`"
-            description="按已通过用例的比例计分；未通过的用例请检查是否写入了无限循环或过重计算。"
-          />
-          <el-alert
-            v-if="result.judge_detail?.error"
-            type="error"
-            show-icon
-            :closable="false"
-            :title="result.judge_detail.error"
-          />
-
-          <p v-if="result.judge_detail?.missing?.length" class="result__line">
-            漏选：{{ result.judge_detail.missing.join('、') }}
-          </p>
-          <p v-if="result.judge_detail?.wrong?.length" class="result__line">
-            错选：{{ result.judge_detail.wrong.join('、') }}
-          </p>
-
-          <el-table v-if="judgeCases.length" :data="judgeCases" size="small" class="result__table">
-            <el-table-column prop="index" label="用例" width="56" />
-            <el-table-column label="输入" min-width="90">
-              <template #default="{ row }">
-                <code class="cell">{{ row.stdin || '（无输入）' }}</code>
-              </template>
-            </el-table-column>
-            <el-table-column label="期望输出" min-width="90">
-              <template #default="{ row }">
-                <code class="cell">{{ row.expected_stdout }}</code>
-              </template>
-            </el-table-column>
-            <el-table-column label="实际输出" min-width="90">
-              <template #default="{ row }">
-                <code class="cell">{{ row.skipped ? '（未执行）' : row.actual_stdout || '（无输出）' }}</code>
-              </template>
-            </el-table-column>
-            <el-table-column prop="duration_ms" label="耗时(ms)" width="86" />
-            <el-table-column label="结果" width="110">
-              <template #default="{ row }">
-                <el-tag :type="caseTone(row)" size="small">{{ caseLabel(row) }}</el-tag>
-              </template>
-            </el-table-column>
-          </el-table>
-
-          <p v-if="result.feedback" class="result__feedback">{{ result.feedback }}</p>
-
-          <el-collapse class="result__reveal">
-            <el-collapse-item title="正确答案与解析" name="reveal">
-              <pre class="reveal__answer">{{ displayAnswer(result.correct_answer) }}</pre>
-              <p class="reveal__text">{{ result.explanation || '（该习题暂无解析）' }}</p>
-            </el-collapse-item>
-          </el-collapse>
-        </section>
-
-        <!-- AI 辅导：citation 先行 → 流式正文 → done 携带降级与用量 -->
-        <section v-if="hint.intent" class="hint">
-          <h3 class="result__head">
-            {{ hint.intent === 'seek_answer' ? '思路提示' : '我的作答批改' }}
-            <el-tag v-if="hint.done?.provider" size="small" effect="plain">
-              提供方 {{ hint.done.provider }}
-            </el-tag>
-            <el-tag v-if="hintMockProvider" size="small" type="warning" effect="plain">
-              Mock 模式
-            </el-tag>
-            <el-tag v-if="hint.done?.usage_estimated" size="small" type="info" effect="plain">
-              用量按字符估算
-            </el-tag>
-          </h3>
-
-          <DegradedBanner
-            :degraded="Boolean(hint.done?.degraded)"
-            :fallback-reason="hint.done?.fallback_reason ?? null"
-          />
-
-          <p v-if="hint.intent === 'seek_answer'" class="hint__note">
-            提示只给思路与关键概念，不含完整实现；请自己写出答案后提交判分。
-          </p>
-
-          <MarkdownView v-if="hint.text" :content="hint.text" />
-          <p v-else-if="!hint.streaming" class="hint__note">本次没有返回内容，请稍后重试。</p>
-          <p v-if="hint.streaming" class="hint__typing">生成中…</p>
-
-          <CitationList v-if="hint.citations.length" :citations="hint.citations" />
-        </section>
       </template>
-    </section>
+
+      <div v-if="optionKeys.length" class="rounded-ctl bg-softer p-3 text-sm">
+        <div v-for="key in optionKeys" :key="key" class="flex gap-2">
+          <span class="font-bold text-brand">{{ key }}</span>
+          <span class="text-ink">{{ detail.options?.[key] }}</span>
+        </div>
+      </div>
+
+      <div class="mt-3 flex flex-col gap-3">
+        <UiRadioGroup v-if="detail.type === 'choice'" v-model="draft.choice" :options="choiceOptions" />
+        <UiCheckboxGroup v-else-if="detail.type === 'multi'" v-model="draft.multi" :options="choiceOptions" />
+        <UiInput v-else-if="detail.type === 'blank'" v-model="draft.blank" placeholder="填写答案" />
+        <UiTextarea v-else-if="detail.type === 'short'" v-model="draft.short" :rows="6" placeholder="写下你的解答" />
+        <div v-else-if="detail.type === 'coding'" class="min-h-[320px]">
+          <CodeEditor :key="detail.id" v-model="draft.coding" :language="codingLanguage" />
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2">
+          <UiButton :disabled="!hasAnswer || submitting || hint.streaming" :loading="submitting" @click="submit">
+            <UiIcon name="Send" :size="14" />提交判分
+          </UiButton>
+          <UiButton variant="secondary" :disabled="hint.streaming" @click="askHint('seek_answer')">
+            <UiIcon name="Lightbulb" :size="14" />获取思路
+          </UiButton>
+          <UiButton variant="secondary" :disabled="!hasAnswer || hint.streaming" @click="askHint('review_my_code')">
+            <UiIcon name="ClipboardCheck" :size="14" />批改我的作答
+          </UiButton>
+          <UiButton v-if="hint.streaming" variant="ghost" @click="stopHint">
+            <UiIcon name="Pause" :size="14" />停止生成
+          </UiButton>
+          <router-link
+            v-if="result && result.is_correct === false"
+            to="/mistakes"
+            class="text-sm text-brand hover:underline"
+          >
+            已计入错题本，去看看薄弱知识点
+          </router-link>
+        </div>
+      </div>
+
+      <!-- 判分结果：提交后才揭示正确答案与解析 -->
+      <section v-if="result" class="mt-4 flex flex-col gap-2 border-t border-dashed border-line pt-3">
+        <h3 class="m-0 flex flex-wrap items-center gap-2 text-base font-bold text-ink">
+          判分结果
+          <UiBadge :variant="result.is_correct ? 'success' : 'danger'">{{ result.is_correct ? '回答正确' : '回答错误' }}</UiBadge>
+          <UiBadge variant="info">得分 {{ result.score }}</UiBadge>
+          <UiBadge v-if="aiScoreLabel" variant="warning">{{ aiScoreLabel }}</UiBadge>
+          <UiBadge>第 {{ result.attempt_no }} 次作答</UiBadge>
+        </h3>
+
+        <UiAlert
+          v-if="result.judge_detail?.budget_exceeded"
+          variant="warning"
+          :title="`用例执行累计超过 ${budgetLimit} 秒，剩余用例已中止`"
+          description="按已通过用例的比例计分；未通过的用例请检查是否写入了无限循环或过重计算。"
+        />
+        <UiAlert v-if="result.judge_detail?.error" variant="error" :title="result.judge_detail.error" />
+
+        <p v-if="result.judge_detail?.missing?.length" class="m-0 text-sm text-ink">
+          漏选：{{ result.judge_detail.missing.join('、') }}
+        </p>
+        <p v-if="result.judge_detail?.wrong?.length" class="m-0 text-sm text-ink">
+          错选：{{ result.judge_detail.wrong.join('、') }}
+        </p>
+
+        <table v-if="judgeCases.length" class="w-full text-sm">
+          <thead class="text-xs text-muted-ink">
+            <tr>
+              <th class="px-3 py-2 text-left font-medium">用例</th>
+              <th class="px-3 py-2 text-left font-medium">输入</th>
+              <th class="px-3 py-2 text-left font-medium">期望输出</th>
+              <th class="px-3 py-2 text-left font-medium">实际输出</th>
+              <th class="px-3 py-2 text-left font-medium">耗时(ms)</th>
+              <th class="px-3 py-2 text-left font-medium">结果</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-line">
+            <tr v-for="row in judgeCases" :key="row.index">
+              <td class="px-3 py-2">{{ row.index }}</td>
+              <td class="px-3 py-2 text-xs text-muted-ink">{{ row.stdin || '（无输入）' }}</td>
+              <td class="px-3 py-2 text-xs text-muted-ink">{{ row.expected_stdout }}</td>
+              <td class="px-3 py-2 text-xs text-muted-ink">{{ row.skipped ? '（未执行）' : row.actual_stdout || '（无输出）' }}</td>
+              <td class="px-3 py-2 text-muted-ink">{{ row.duration_ms }}</td>
+              <td class="px-3 py-2"><UiBadge :variant="caseTone(row)">{{ caseLabel(row) }}</UiBadge></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p v-if="result.feedback" class="m-0 rounded-ctl bg-softer px-3 py-2 text-sm leading-relaxed text-ink">
+          {{ result.feedback }}
+        </p>
+
+        <UiCollapse :items="[{ name: 'reveal', title: '正确答案与解析' }]">
+          <template #reveal>
+            <pre class="m-0 mb-2 overflow-auto whitespace-pre-wrap break-words rounded-ctl bg-softer p-3 text-sm">{{ displayAnswer(result.correct_answer) }}</pre>
+            <p class="m-0 text-sm leading-relaxed text-muted-ink">{{ result.explanation || '（该习题暂无解析）' }}</p>
+          </template>
+        </UiCollapse>
+      </section>
+
+      <!-- AI 辅导：citation 先行 → 流式正文 → done 携带降级与用量 -->
+      <section v-if="hint.intent" class="mt-4 flex flex-col gap-2 border-t border-dashed border-line pt-3">
+        <h3 class="m-0 flex flex-wrap items-center gap-2 text-base font-bold text-ink">
+          {{ hint.intent === 'seek_answer' ? '思路提示' : '我的作答批改' }}
+          <UiBadge v-if="hint.done?.provider" variant="info">提供方 {{ hint.done.provider }}</UiBadge>
+          <UiBadge v-if="hintMockProvider" variant="warning">Mock 模式</UiBadge>
+          <UiBadge v-if="hint.done?.usage_estimated" variant="info">用量按字符估算</UiBadge>
+        </h3>
+
+        <DegradedBanner :degraded="Boolean(hint.done?.degraded)" :fallback-reason="hint.done?.fallback_reason ?? null" />
+
+        <p v-if="hint.intent === 'seek_answer'" class="m-0 text-sm text-muted-ink">
+          提示只给思路与关键概念，不含完整实现；请自己写出答案后提交判分。
+        </p>
+
+        <MarkdownView v-if="hint.text" :content="hint.text" />
+        <p v-else-if="!hint.streaming" class="m-0 text-sm text-muted-ink">本次没有返回内容，请稍后重试。</p>
+        <p v-if="hint.streaming" class="hint-typing m-0 text-sm text-muted-ink">生成中…</p>
+
+        <CitationList v-if="hint.citations.length" :citations="hint.citations" />
+      </section>
+    </UiCard>
   </div>
 </template>
 
 <style scoped>
-.exercises {
-  display: grid;
-  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
-  gap: var(--space-4);
-  align-items: start;
-}
-
-.pane {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-4);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-card);
-  background: var(--color-card);
-  min-width: 0;
-}
-
-.pane__title {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--color-foreground);
-}
-
-.pane__head {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.pane__hint {
-  margin: 0;
-  font-size: 13px;
-  color: var(--color-muted-foreground);
-}
-
-.filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.filters :deep(.el-select) {
-  width: 130px;
-}
-
-.list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  max-height: 60vh;
-  overflow: auto;
-}
-
-.list__empty {
-  font-size: 13px;
-  color: var(--color-muted-foreground);
-}
-
-.card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  width: 100%;
-  padding: var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
-  background: var(--color-card);
-  color: var(--color-foreground);
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-  transition: background 200ms ease, border-color 200ms ease;
-}
-
-.card:hover {
-  background: var(--color-muted);
-}
-
-.card:focus-visible {
-  outline: 2px solid var(--color-ring);
-  outline-offset: 2px;
-}
-
-.card--active {
-  border-color: var(--color-primary);
-  background: var(--color-muted);
-}
-
-.card__tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.card__stem {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  color: var(--color-muted-foreground);
-  white-space: pre-wrap;
-}
-
-.stem {
-  margin: 0;
-  font-size: 14px;
-  line-height: 1.7;
-  color: var(--color-foreground);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.options {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-3);
-  border-radius: var(--radius-control);
-  background: var(--color-muted);
-  font-size: 13px;
-}
-
-.options__row {
-  display: flex;
-  gap: var(--space-2);
-}
-
-.options__key {
-  font-weight: 700;
-  color: var(--color-primary);
-}
-
-.answer {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.answer__coding {
-  min-height: 320px;
-}
-
-.answer__actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.inline-link {
-  font-size: 13px;
-  color: var(--color-primary);
-}
-
-.result,
-.hint {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding-top: var(--space-3);
-  border-top: 1px dashed var(--color-border);
-}
-
-.result__head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  margin: 0;
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--color-foreground);
-}
-
-.result__line,
-.result__feedback {
-  margin: 0;
-  font-size: 13px;
-  color: var(--color-foreground);
-}
-
-.result__feedback {
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-control);
-  background: var(--color-muted);
-  line-height: 1.6;
-}
-
-.result__table {
-  width: 100%;
-}
-
-.cell {
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 12px;
-}
-
-.result__reveal {
-  border-top: none;
-}
-
-.reveal__answer {
-  margin: 0 0 var(--space-2);
-  padding: var(--space-3);
-  border-radius: var(--radius-control);
-  background: var(--color-muted);
-  font-size: 13px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  overflow: auto;
-}
-
-.reveal__text {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.7;
-  color: var(--color-muted-foreground);
-  white-space: pre-wrap;
-}
-
-.hint__note,
-.hint__typing {
-  margin: 0;
-  font-size: 12px;
-  color: var(--color-muted-foreground);
-}
-
-.hint__typing {
+/* 基线 §5：生成中提示的呼吸动画；尊重 prefers-reduced-motion */
+.hint-typing {
   animation: pulse 1.2s ease-in-out infinite;
 }
-
 @keyframes pulse {
-  0%,
-  100% {
+  0%, 100% {
     opacity: 0.4;
   }
   50% {
     opacity: 1;
   }
 }
-
 @media (prefers-reduced-motion: reduce) {
-  .hint__typing {
+  .hint-typing {
     animation: none;
-  }
-}
-
-@media (max-width: 1023px) {
-  .exercises {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .list {
-    max-height: none;
   }
 }
 </style>
