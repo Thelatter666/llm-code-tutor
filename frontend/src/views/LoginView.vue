@@ -1,11 +1,13 @@
 <script setup lang="ts">
+import { useNotify } from '@/composables/useNotify'
 import { useAuthStore } from '@/stores/auth'
-import { ElMessage } from 'element-plus'
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { UiButton, UiCard, UiInput } from '@/ui'
 
 const router = useRouter()
 const auth = useAuthStore()
+const notify = useNotify()
 const form = ref({ username: '', password: '' })
 const loading = ref(false)
 
@@ -15,7 +17,7 @@ async function submit() {
     await auth.doLogin(form.value.username, form.value.password)
     router.push('/')
   } catch (e) {
-    ElMessage.error((e as Error).message)
+    notify.error((e as Error).message)
   } finally {
     loading.value = false
   }
@@ -23,48 +25,26 @@ async function submit() {
 </script>
 
 <template>
-  <div class="login-wrap">
-    <el-card class="login-card" shadow="always">
+  <div class="flex h-screen items-center justify-center bg-canvas p-4">
+    <UiCard class="w-[380px] shadow-pop">
       <template #header>
-        <h2 class="login-title">智能编程教学辅助系统</h2>
+        <div class="flex items-center justify-center gap-2">
+          <span class="h-5 w-1.5 rounded-pill bg-gradient-to-b from-brand to-highlight" aria-hidden="true" />
+          <h2 class="text-lg font-bold text-ink">智能编程教学辅助系统</h2>
+        </div>
       </template>
-      <el-form @submit.prevent="submit">
-        <el-form-item label="用户名">
-          <el-input v-model="form.username" autocomplete="username" />
-        </el-form-item>
-        <el-form-item label="密码">
-          <el-input v-model="form.password" type="password" autocomplete="current-password" />
-        </el-form-item>
-        <el-button type="primary" class="login-submit" :loading="loading" @click="submit">
-          登录
-        </el-button>
-      </el-form>
-    </el-card>
+
+      <form class="flex flex-col gap-3" @submit.prevent="submit">
+        <div class="flex flex-col gap-1">
+          <label for="username" class="text-sm text-muted-ink">用户名</label>
+          <UiInput id="username" v-model="form.username" autocomplete="username" />
+        </div>
+        <div class="flex flex-col gap-1">
+          <label for="password" class="text-sm text-muted-ink">密码</label>
+          <UiInput id="password" v-model="form.password" type="password" autocomplete="current-password" />
+        </div>
+        <UiButton class="mt-1 w-full" type="submit" :loading="loading">登录</UiButton>
+      </form>
+    </UiCard>
   </div>
 </template>
-
-<style scoped>
-.login-wrap {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100vh;
-  background: var(--color-background);
-}
-
-.login-card {
-  width: 380px;
-  border-radius: 16px;
-}
-
-.login-title {
-  font-size: 18px;
-  text-align: center;
-  color: var(--color-foreground);
-}
-
-.login-submit {
-  width: 100%;
-  border-radius: 8px;
-}
-</style>
