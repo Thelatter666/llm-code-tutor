@@ -28,6 +28,11 @@ dist/
 
 # 编辑器与系统
 .DS_Store
+
+# 视觉回归截图：只入库 v1-old（改造前冻结参照），其余为运行产物
+tests/screenshots/*
+!tests/screenshots/v1-old/
+playwright-report/
 .idea/
 .vscode/
 *.swp
