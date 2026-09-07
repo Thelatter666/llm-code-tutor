@@ -20,7 +20,7 @@ const emit = defineEmits<{ 'update:modelValue': [value: string | number] }>()
     :placeholder="props.placeholder"
     :disabled="props.disabled"
     :maxlength="props.maxlength"
-    class="w-full rounded-ctl border border-line bg-surface px-3 py-2 text-sm text-ink outline-none transition-colors placeholder:text-muted-ink hover:border-line-strong focus:border-brand focus:ring-2 focus:ring-brand/30 disabled:opacity-60"
+    class="box-border w-full rounded-ctl border border-line bg-surface px-3 py-2 text-sm text-ink outline-none transition-colors placeholder:text-muted-ink hover:border-line-strong focus:border-brand focus:ring-2 focus:ring-brand/30 disabled:opacity-60"
     @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)"
   />
 </template>

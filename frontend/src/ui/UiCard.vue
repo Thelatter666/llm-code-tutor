@@ -4,7 +4,7 @@ withDefaults(defineProps<{ title?: string; padded?: boolean }>(), { padded: true
 </script>
 
 <template>
-  <section class="rounded-panel border border-line bg-surface shadow-panel">
+  <section class="box-border rounded-panel border border-line bg-surface shadow-panel">
     <header v-if="title || $slots.header" class="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
       <h3 v-if="title" class="text-md font-semibold text-ink">{{ title }}</h3>
       <slot name="header" />

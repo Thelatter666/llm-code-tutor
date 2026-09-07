@@ -11,9 +11,20 @@
 
 @import 'tailwindcss/theme.css' layer(theme);
 /* 不引入 preflight：既有页面依赖浏览器默认样式（p / ul / h* 的 margin 等），
- * 引入重置会引起全站布局偏移。基础重置留到页面改造批次按需自写（ADR-0012）。
+ * 引入重置会引起全站布局偏移（ADR-0012）。
+ * 但 box-sizing 必须自补：全站页面已 Tailwind 化，其工具类普遍假设 border-box；
+ * 不补的话 w-full + 内边距 + 边框的元素（输入框/按钮）会按 content-box 溢出容器
+ * （登录页输入框伸出卡片即此因）。
  */
 @import 'tailwindcss/utilities.css' layer(utilities);
+
+@layer base {
+  *,
+  ::before,
+  ::after {
+    box-sizing: border-box;
+  }
+}
 
 @theme inline {
   /* 语义色板：与 theme.css 的 --color-* 同源，改名只为避免 @theme 自引用 */
