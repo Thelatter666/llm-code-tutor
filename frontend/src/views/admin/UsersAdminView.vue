@@ -188,9 +188,15 @@ list.load()
   <div class="flex flex-col gap-4">
     <UiCard :padded="false">
       <div class="flex flex-wrap items-center gap-2 border-b border-line p-3">
-        <UiInput v-model="filters.q" placeholder="搜索用户名 / 邮箱" class="w-[240px]" @keyup.enter="search" />
-        <UiSelect v-model="filters.role" :options="ROLE_OPTIONS" placeholder="全部角色" clearable class="w-[140px]" @update:model-value="search" />
-        <UiSelect v-model="filters.status" :options="STATUS_OPTIONS" placeholder="全部状态" clearable class="w-[140px]" @update:model-value="search" />
+        <div class="w-[240px]">
+          <UiInput v-model="filters.q" placeholder="搜索用户名 / 邮箱" @keyup.enter="search" />
+        </div>
+        <div class="w-[140px]">
+          <UiSelect v-model="filters.role" :options="ROLE_OPTIONS" placeholder="全部角色" clearable @update:model-value="search" />
+        </div>
+        <div class="w-[140px]">
+          <UiSelect v-model="filters.status" :options="STATUS_OPTIONS" placeholder="全部状态" clearable @update:model-value="search" />
+        </div>
         <UiButton variant="secondary" @click="search">
           <UiIcon name="RotateCcw" :size="14" />刷新
         </UiButton>

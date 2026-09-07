@@ -65,15 +65,18 @@ list.load()
 
     <UiCard :padded="false">
       <div class="flex flex-wrap items-center gap-2 border-b border-line p-3">
-        <UiInput
-          v-model="filters.action"
-          placeholder="操作类型（精确匹配，如 admin_user_delete）"
-          class="w-[240px]"
-          @keyup.enter="search"
-        />
-        <UiInput v-model="filters.userId" placeholder="用户 ID（精确匹配）" class="w-[200px]" @keyup.enter="search" />
-        <UiDatePicker v-model="filters.start" placeholder="开始日期" />
-        <UiDatePicker v-model="filters.end" placeholder="结束日期" />
+        <div class="w-[240px]">
+          <UiInput
+            v-model="filters.action"
+            placeholder="操作类型（精确匹配，如 admin_user_delete）"
+            @keyup.enter="search"
+          />
+        </div>
+        <div class="w-[200px]">
+          <UiInput v-model="filters.userId" placeholder="用户 ID（精确匹配）" @keyup.enter="search" />
+        </div>
+        <div class="w-[150px]"><UiDatePicker v-model="filters.start" placeholder="开始日期" /></div>
+        <div class="w-[150px]"><UiDatePicker v-model="filters.end" placeholder="结束日期" /></div>
         <UiButton @click="search">
           <UiIcon name="Search" :size="14" />查询
         </UiButton>

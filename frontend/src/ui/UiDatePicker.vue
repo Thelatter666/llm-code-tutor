@@ -11,11 +11,13 @@ const emit = defineEmits<{ 'update:modelValue': [value: string | null] }>()
 
 <template>
   <ElDatePicker
+    v-bind="$attrs"
     :model-value="props.modelValue"
     type="date"
     value-format="YYYY-MM-DD"
     :placeholder="props.placeholder"
     :disabled="props.disabled"
+    class="!w-full"
     @update:model-value="emit('update:modelValue', ($event as string | null) ?? null)"
   />
 </template>

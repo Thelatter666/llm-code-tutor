@@ -241,10 +241,18 @@ list.load()
   <div class="flex flex-col gap-4">
     <UiCard :padded="false">
       <div class="flex flex-wrap items-center gap-2 border-b border-line p-3">
-        <UiSelect v-model="filters.type" :options="typeOptions" placeholder="全部题型" clearable class="w-[140px]" @update:model-value="search" />
-        <UiSelect v-model="filters.difficulty" :options="difficultyOptions" placeholder="全部难度" clearable class="w-[140px]" @update:model-value="search" />
-        <UiInput v-model="filters.knowledgeTag" placeholder="知识点标签" class="w-[180px]" @keyup.enter="search" />
-        <UiSelect v-model="filters.status" :options="statusOptions" placeholder="全部状态" clearable class="w-[140px]" @update:model-value="search" />
+        <div class="w-[140px]">
+          <UiSelect v-model="filters.type" :options="typeOptions" placeholder="全部题型" clearable @update:model-value="search" />
+        </div>
+        <div class="w-[140px]">
+          <UiSelect v-model="filters.difficulty" :options="difficultyOptions" placeholder="全部难度" clearable @update:model-value="search" />
+        </div>
+        <div class="w-[180px]">
+          <UiInput v-model="filters.knowledgeTag" placeholder="知识点标签" @keyup.enter="search" />
+        </div>
+        <div class="w-[140px]">
+          <UiSelect v-model="filters.status" :options="statusOptions" placeholder="全部状态" clearable @update:model-value="search" />
+        </div>
         <UiButton variant="secondary" @click="search">
           <UiIcon name="RotateCcw" :size="14" />刷新
         </UiButton>

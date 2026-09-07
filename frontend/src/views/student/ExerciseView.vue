@@ -292,9 +292,15 @@ const hintMockProvider = computed(() => hint.value.done?.provider === 'mock')
       </template>
 
       <div class="flex flex-wrap gap-2">
-        <UiSelect v-model="filterType" :options="typeOptions" placeholder="全部题型" clearable class="w-[130px]" />
-        <UiSelect v-model="filterDifficulty" :options="difficultyOptions" placeholder="全部难度" clearable class="w-[130px]" />
-        <UiSelect v-model="filterTag" :options="tagOptions" placeholder="全部知识点" clearable class="w-[130px]" />
+        <div class="w-[130px]">
+          <UiSelect v-model="filterType" :options="typeOptions" placeholder="全部题型" clearable />
+        </div>
+        <div class="w-[130px]">
+          <UiSelect v-model="filterDifficulty" :options="difficultyOptions" placeholder="全部难度" clearable />
+        </div>
+        <div class="w-[130px]">
+          <UiSelect v-model="filterTag" :options="tagOptions" placeholder="全部知识点" clearable />
+        </div>
       </div>
 
       <ul class="mt-3 flex max-h-[60vh] list-none flex-col gap-2 overflow-auto p-0">
