@@ -3,7 +3,7 @@
 const props = withDefaults(
   defineProps<{
     modelValue: string | number
-    type?: 'text' | 'password' | 'number' | 'search'
+    type?: 'text' | 'password' | 'number' | 'search' | 'email' | 'tel' | 'url'
     placeholder?: string
     disabled?: boolean
     maxlength?: number
