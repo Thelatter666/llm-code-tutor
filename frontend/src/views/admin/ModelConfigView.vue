@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import * as adminApi from '@/api/admin'
+import { useNotify } from '@/composables/useNotify'
 import type { AntiPlagiarismMode, LlmProvider, ModelConfigPutPayload } from '@/types/admin'
-import { MagicStick } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
+import { UiAlert, UiBadge, UiButton, UiCard, UiIcon, UiInput, UiInputNumber, UiRadioGroup, UiSelect } from '@/ui'
 
 /**
  * 模型配置页（spec §6.2 / §4.2 硬约束 4 / §8.8，P6 Task 10）。
@@ -19,6 +19,17 @@ const MODE_LABELS: Record<AntiPlagiarismMode, string> = {
   guided: '引导（默认，允许 ≤10 行片段）',
   loose: '宽松（允许完整实现，需讲解）',
 }
+
+const PROVIDER_OPTIONS = [
+  { label: 'Mock（无需 API Key）', value: 'mock' },
+  { label: 'OpenAI 兼容', value: 'openai_compat' },
+]
+const modeOptions = (Object.keys(MODE_LABELS) as AntiPlagiarismMode[]).map((mode) => ({
+  label: MODE_LABELS[mode],
+  value: mode,
+}))
+
+const notify = useNotify()
 
 const form = reactive({
   provider: 'mock' as LlmProvider,
@@ -84,13 +95,13 @@ function buildPayload(): ModelConfigPutPayload {
 
 async function save() {
   if (!form.model.trim()) {
-    ElMessage.warning('请填写模型名称')
+    notify.warning('请填写模型名称')
     return
   }
   saving.value = true
   try {
     const { data } = await adminApi.putModelConfig(buildPayload())
-    ElMessage.success('配置已保存并生效')
+    notify.success('配置已保存并生效')
     // 刷新 revision 与更新人回显（保存即 revision += 1）
     const cfg = data.data
     if (cfg) {
@@ -111,10 +122,8 @@ async function testConnection() {
     const { data } = await adminApi.testModelConfig()
     const result = data.data
     if (!result) return
-    const headline = result.ok
-      ? `连接正常（${result.latency_ms ?? 0}ms）`
-      : '连接失败'
-    ElMessage({
+    const headline = result.ok ? `连接正常（${result.latency_ms ?? 0}ms）` : '连接失败'
+    notify.raw({
       type: result.ok ? 'success' : 'warning',
       message: `${headline}：${result.sample}`,
       duration: 8000,
@@ -127,133 +136,102 @@ async function testConnection() {
   }
 }
 
+const keyHint = computed(() =>
+  form.provider === 'openai_compat'
+    ? '切换 OpenAI 兼容必须提供密钥。'
+    : '清除密钥：切回 Mock 即可。',
+)
+
 onMounted(load)
 </script>
 
 <template>
-  <div v-loading="loading" class="model-config-page">
-    <el-alert
-      type="info"
-      show-icon
-      :closable="false"
-      class="model-config-page__notice"
+  <div v-loading="loading" class="flex flex-col gap-4">
+    <UiAlert
+      variant="info"
       title="配置保存即生效，无需重启服务"
       description="修改模型或防抄袭档位后，下一次对话/辅导请求立即使用新配置（revision 版本号自动递增）。"
     />
 
-    <el-form label-width="140px" class="model-config-page__form" @submit.prevent>
-      <el-form-item label="提供方">
-        <el-radio-group v-model="form.provider">
-          <el-radio value="mock">Mock（无需 API Key）</el-radio>
-          <el-radio value="openai_compat">OpenAI 兼容</el-radio>
-        </el-radio-group>
-      </el-form-item>
-
-      <el-form-item label="模型名称">
-        <el-input v-model="form.model" placeholder="如 gpt-4o-mini / mock-1" />
-      </el-form-item>
-
-      <el-form-item label="Base URL">
-        <el-input v-model="form.base_url" placeholder="OpenAI 兼容服务地址（可空）" />
-      </el-form-item>
-
-      <el-form-item label="API Key">
-        <el-input
-          v-model="form.api_key"
-          type="password"
-          show-password
-          placeholder="留空则保持不变；读取接口仅显示掩码"
-        />
-        <div class="model-config-page__hint">
-          密钥以加密形式存储，仅在实际调用时于内存中解密（掩码形态 sk-****abcd）。
-          {{ form.provider === 'openai_compat' ? '切换 OpenAI 兼容必须提供密钥。' : '清除密钥：切回 Mock 即可。' }}
+    <UiCard>
+      <form class="flex max-w-[560px] flex-col gap-4" @submit.prevent>
+        <div class="flex flex-col gap-1">
+          <label class="text-sm text-muted-ink">提供方</label>
+          <UiRadioGroup v-model="form.provider" :options="PROVIDER_OPTIONS" />
         </div>
-      </el-form-item>
 
-      <el-form-item label="温度 temperature">
-        <el-input-number v-model="form.temperature" :min="0" :max="2" :step="0.1" />
-      </el-form-item>
-
-      <el-form-item label="top_p">
-        <el-input-number v-model="form.top_p" :min="0.01" :max="1" :step="0.05" />
-      </el-form-item>
-
-      <el-form-item label="max_tokens">
-        <el-input-number v-model="form.max_tokens" :min="1" :step="128" />
-      </el-form-item>
-
-      <el-form-item label="防抄袭档位">
-        <el-select v-model="form.anti_plagiarism_mode" class="model-config-page__mode">
-          <el-option v-for="(label, mode) in MODE_LABELS" :key="mode" :label="label" :value="mode" />
-        </el-select>
-      </el-form-item>
-
-      <el-form-item label="相关度阈值">
-        <el-input-number
-          v-model="form.score_threshold"
-          :min="0"
-          :max="1"
-          :step="0.05"
-          :value-on-clear="null"
-        />
-        <div class="model-config-page__hint">留空 = 按 embedding 模型的默认阈值（0.35）。</div>
-      </el-form-item>
-
-      <el-form-item label="top_k">
-        <el-input-number v-model="form.top_k" :min="1" :max="20" />
-      </el-form-item>
-
-      <el-form-item label="embedding 配置">
-        <div class="model-config-page__embedding">
-          <el-tag size="small" effect="plain" :icon="MagicStick">
-            只读回显 —— 切换 embedding 请在知识库管理页走「重建」流程（需二次确认，避免维度混用）
-          </el-tag>
+        <div class="flex flex-col gap-1">
+          <label class="text-sm text-muted-ink">模型名称</label>
+          <UiInput v-model="form.model" placeholder="如 gpt-4o-mini / mock-1" />
         </div>
-      </el-form-item>
 
-      <el-form-item label=" ">
-        <el-button type="primary" :loading="saving" @click="save">保存配置</el-button>
-        <el-button :loading="testing" @click="testConnection">测试连接</el-button>
-      </el-form-item>
-    </el-form>
+        <div class="flex flex-col gap-1">
+          <label class="text-sm text-muted-ink">Base URL</label>
+          <UiInput v-model="form.base_url" placeholder="OpenAI 兼容服务地址（可空）" />
+        </div>
 
-    <div class="model-config-page__meta">
+        <div class="flex flex-col gap-1">
+          <label class="text-sm text-muted-ink">API Key</label>
+          <UiInput
+            v-model="form.api_key"
+            type="password"
+            placeholder="留空则保持不变；读取接口仅显示掩码"
+          />
+          <p class="text-xs leading-relaxed text-muted-ink">
+            密钥以加密形式存储，仅在实际调用时于内存中解密（掩码形态 sk-****abcd）。{{ keyHint }}
+          </p>
+        </div>
+
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div class="flex flex-col gap-1">
+            <label class="text-sm text-muted-ink">温度 temperature</label>
+            <UiInputNumber v-model="form.temperature" :min="0" :max="2" :step="0.1" />
+          </div>
+          <div class="flex flex-col gap-1">
+            <label class="text-sm text-muted-ink">top_p</label>
+            <UiInputNumber v-model="form.top_p" :min="0.01" :max="1" :step="0.05" />
+          </div>
+          <div class="flex flex-col gap-1">
+            <label class="text-sm text-muted-ink">max_tokens</label>
+            <UiInputNumber v-model="form.max_tokens" :min="1" :step="128" />
+          </div>
+          <div class="flex flex-col gap-1">
+            <label class="text-sm text-muted-ink">top_k</label>
+            <UiInputNumber v-model="form.top_k" :min="1" :max="20" />
+          </div>
+        </div>
+
+        <div class="flex flex-col gap-1">
+          <label class="text-sm text-muted-ink">防抄袭档位</label>
+          <UiSelect v-model="form.anti_plagiarism_mode" :options="modeOptions" />
+        </div>
+
+        <div class="flex flex-col gap-1">
+          <label class="text-sm text-muted-ink">相关度阈值</label>
+          <UiInputNumber v-model="form.score_threshold" :min="0" :max="1" :step="0.05" clearable :value-on-clear="null" />
+          <p class="text-xs text-muted-ink">留空 = 按 embedding 模型的默认阈值（0.35）。</p>
+        </div>
+
+        <div class="flex flex-col gap-1">
+          <label class="text-sm text-muted-ink">embedding 配置</label>
+          <div class="flex items-center gap-2">
+            <UiBadge variant="muted">
+              只读回显 —— 切换 embedding 请在知识库管理页走「重建」流程（需二次确认，避免维度混用）
+            </UiBadge>
+            <UiIcon name="Info" :size="14" class="text-muted-ink" />
+          </div>
+        </div>
+
+        <div class="flex gap-2">
+          <UiButton :loading="saving" @click="save">保存配置</UiButton>
+          <UiButton variant="secondary" :loading="testing" @click="testConnection">测试连接</UiButton>
+        </div>
+      </form>
+    </UiCard>
+
+    <p class="flex gap-4 text-sm text-muted-ink">
       <span>revision：{{ revision }}</span>
       <span>最近更新：{{ updatedAt ?? '—' }} · {{ updatedBy ?? '—' }}</span>
-    </div>
+    </p>
   </div>
 </template>
-
-<style scoped>
-.model-config-page__notice {
-  margin-bottom: var(--space-4);
-}
-
-.model-config-page__form {
-  max-width: 560px;
-}
-
-.model-config-page__mode {
-  width: 320px;
-}
-
-.model-config-page__hint {
-  font-size: 12px;
-  color: var(--color-muted-foreground);
-  line-height: 1.5;
-}
-
-.model-config-page__embedding {
-  display: flex;
-  align-items: center;
-  min-height: 32px;
-}
-
-.model-config-page__meta {
-  display: flex;
-  gap: var(--space-4);
-  margin-top: var(--space-4);
-  font-size: 13px;
-  color: var(--color-muted-foreground);
-}
-</style>
