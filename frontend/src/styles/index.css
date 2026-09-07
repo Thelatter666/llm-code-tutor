@@ -1,0 +1,62 @@
+/* 设计系统入口（ADR-0012）
+ *
+ * Tailwind 的三段输出全部放进 @layer，Element Plus 的 CSS 保持无层（unlayered）。
+ * 按 CSS 级联规则，无层样式优先于任何层内样式 —— 于是 preflight 不会破坏
+ * el-button / el-input / el-table 等既有组件，既有页面视觉保持零变化；
+ * 反过来，Tailwind 工具类也不会误伤 Element Plus 的内部 DOM。
+ *
+ * 需要工具类强制覆盖 Element Plus 时，用 Tailwind v4 的 `!` 后缀（如 bg-brand!）。
+ */
+@layer theme, base, components, utilities;
+
+@import 'tailwindcss/theme.css' layer(theme);
+/* 不引入 preflight：既有页面依赖浏览器默认样式（p / ul / h* 的 margin 等），
+ * 引入重置会引起全站布局偏移。基础重置留到页面改造批次按需自写（ADR-0012）。
+ */
+@import 'tailwindcss/utilities.css' layer(utilities);
+
+@theme inline {
+  /* 语义色板：与 theme.css 的 --color-* 同源，改名只为避免 @theme 自引用 */
+  --font-sans: var(--font-app);
+
+  --color-canvas: var(--color-background);
+  --color-surface: var(--color-card);
+  --color-ink: var(--color-foreground);
+  --color-muted-ink: var(--color-muted-foreground);
+  --color-softer: var(--color-muted);
+  --color-line: var(--color-border);
+  --color-line-strong: var(--color-border-strong);
+  --color-brand: var(--color-primary);
+  --color-brand-fg: var(--color-on-primary);
+  --color-highlight: var(--color-accent);
+  --color-danger: var(--color-destructive);
+
+  --radius-ctl: var(--radius-control);
+  --radius-panel: var(--radius-card);
+  --radius-modal: var(--radius-dialog);
+
+  --shadow-panel: var(--shadow-e2);
+  --shadow-pop: var(--shadow-e3);
+
+  --text-xs: var(--fs-xs);
+  --text-xs--line-height: var(--lh-normal);
+  --text-sm: var(--fs-sm);
+  --text-sm--line-height: var(--lh-normal);
+  --text-base: var(--fs-base);
+  --text-base--line-height: var(--lh-normal);
+  --text-md: var(--fs-md);
+  --text-md--line-height: var(--lh-normal);
+  --text-lg: var(--fs-lg);
+  --text-lg--line-height: var(--lh-tight);
+  --text-xl: var(--fs-xl);
+  --text-xl--line-height: var(--lh-tight);
+  --text-2xl: var(--fs-2xl);
+  --text-2xl--line-height: var(--lh-tight);
+
+  --ease-smooth: var(--ease-standard);
+}
+
+/* 暗色模式预留：本期只占位，不提供切换入口（spec §3） */
+.dark {
+  color-scheme: dark;
+}

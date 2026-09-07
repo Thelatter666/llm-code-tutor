@@ -1,9 +1,11 @@
 import { fileURLToPath, URL } from 'node:url'
+import tailwindcss from '@tailwindcss/vite'
 import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vite'
 
 export default defineConfig({
-  plugins: [vue()],
+  // NO_TW=1 用于「重采无 Tailwind 旧版基线」的回归脚本；常规开发与构建请保持开启。
+  plugins: process.env.NO_TW ? [vue()] : [vue(), tailwindcss()],
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
