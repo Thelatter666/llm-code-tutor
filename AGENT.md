@@ -12,11 +12,13 @@
 - 管理员后台：用户管理、知识库管理、模型参数配置、系统日志
 - 功能增强：防抄袭约束提示词、RAG 知识库检索、错题驱动学习
 
+**技术栈**：后端 Python 3.12 · FastAPI · SQLAlchemy 2(async) · SQLite · Chroma；前端 Vue 3 + TypeScript + Vite + **Tailwind CSS v4** + shadcn-vue（骨架，ADR-0011）+ Element Plus（共存期，ADR-0012）+ Monaco。**前端设计基线 v2（`frontend/docs/ui-baseline.md`）为强制约束**；前端现状与契约详见完成报告 `docs/review/2026-09-08-frontend-redesign-completion-report.md`。
+
 ## 开发工作流约束
 
 进行**任何代码修改**，必须按以下流程执行，每阶段需用户确认后才进入下一步：
 
-1. **提需求** → 2. **探索理解** → 3. **复述对齐**（用户确认后才动手）→ 4. **新建分支**（从 `main`，如 `feat/xxx`、`docs/xxx`，禁止直接改 main）→ 5. **执行任务**（加载 `mywf` skill：brainstorm → grilling → spec → plan → 实现）→ 6. **效果确认**（只汇报效果，用户亲自检查）→ 7. **commit / merge 指令**（用户明确下令前，绝不 commit / merge）→ 8. **合并 main**
+1. **提需求** → 2. **探索理解** → 3. **复述对齐**（用户确认后才动手）→ 4. **新建分支**（从 `main`，如 `feat/xxx`、`docs/xxx`，禁止直接改 main）→ 5. **执行任务**（加载 `mywf` skill，按其约定执行；人类决策点以 mywf 为准）→ 6. **效果确认**（只汇报效果，用户亲自检查）→ 7. **commit / merge 指令**（用户明确下令前，绝不 commit / merge）→ 8. **合并 main**
 
 > **远端同步不在本工作流内。** 用户将在本项目本地初步开发完成后，自行创建 GitHub 仓库并推送。
 > Agent 不得执行 `git remote add`、`git push` 或任何涉及远端的操作，除非用户另行明确要求。
@@ -29,7 +31,7 @@
 | 2. 探索理解   | Agent 主动检索代码库、定位相关模块、理解既有约定，形成完整上下文                          |
 | 3. 复述对齐   | Agent 用自己的话复述对需求与现状的理解，**必须等用户明确确认后才进入下一阶段**            |
 | 4. 新建分支   | 从 `main` 切出功能分支，命名规范 `feat/<功能>`、`fix/<问题>`、`docs/<文档>`；禁止直接改 main |
-| 5. 执行任务   | 加载 `mywf` skill，依次执行 brainstorm → grilling → spec → plan → 实现，各子阶段均需确认   |
+| 5. 执行任务   | 加载 `mywf` skill 执行；**人类决策点以 mywf 为准（意图确认 / 难逆转的架构选择 / 完成与合入）**，子阶段确认节奏由 mywf 决定，不强制逐子阶段确认 |
 | 6. 效果确认   | Agent **只汇报改动效果与验证方式**，不做自我判定；由用户亲自检查                          |
 | 7. 提交指令   | **未经用户明确下令，绝不执行 commit / merge**，包括不带参数的 `git commit`               |
 | 8. 合并 main  | 用户下令后，将功能分支合并回 `main`                                                      |
@@ -40,8 +42,18 @@
 | --- | --- |
 | `codebase-onboarding` | **只读**。在本仓库中仅限读取与分析（列目录、检索、读文件、语义跳转），**禁止任何写操作**——不得创建、修改、删除文件，尤其禁止生成/覆写 `AGENT.md`、`CONTEXT.md` 或 `docs/**` 下任何产物。分析结果只以对话回复形式输出；确需落盘时，必须等用户明确下令，并另行走完「开发工作流约束」。 |
 
+### 前端约束（ADR-0011 / 0012）
+
+详细契约见完成报告 `docs/review/2026-09-08-frontend-redesign-completion-report.md` §5–§7 与设计基线 `frontend/docs/ui-baseline.md`（v2，强制）。
+
+- 一切 UI 经 `src/ui/` 适配层：页面/组件**禁止**直接 import `el-*`、`ElMessage`、`ElMessageBox`；通知用 `useNotify`、确认用 `useConfirm`、空态用 `UiEmpty`、加载遮罩用 `v-loading` 指令（共存期豁免）。
+- **不可动**：`composables/useSse.ts`（自实现 SSE，非 EventSource）、`components/MarkdownView.vue`（唯一 `v-html` 豁免点，只收 `renderMarkdown()` 产物）、`components/CodeEditor.vue`（Monaco 动态 import + worker）、`main.ts` 的 CSS 引入顺序（ADR-0012 共存前提）。
+- 前端改动验证门槛：`npm run build` + `npm test` + `npm run test:e2e` 三者全绿；涉及视觉的改动须与 `tests/screenshots/` 基线比对。
+- 定宽控件用外层容器包裹（适配层组件基类自带 `w-full`，直接传宽度类会被覆盖）。
+
 ### 铁律
 
+- 前端改动必须遵守「前端约束」小节与 `frontend/docs/ui-baseline.md`（v2 强制基线）。
 - `codebase-onboarding` 在本仓库限定为**只读**，禁止落盘任何文件（见「Skill 使用约束」）。
 - 第 3 阶段（复述对齐）未获用户确认前，不得创建/修改任何代码文件。
 - 第 7 阶段前，禁止任何形式的 `git commit`、`git merge`、`git rebase`。
