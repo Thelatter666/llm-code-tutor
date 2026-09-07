@@ -261,4 +261,4 @@ Fernet **加密落库**，读取接口一律掩码回显：长度 ≤7 位的短
 ## 技术栈
 
 Python 3.12 · FastAPI · SQLAlchemy 2 (async) · SQLite (aiosqlite) · Chroma · pytest ·
-Vue 3 · TypeScript · Vite · Element Plus · Monaco Editor · vitest
+Vue 3 · TypeScript · Vite · Tailwind CSS v4 · shadcn-vue（deferred）· Element Plus（共存期，逐步退场）· Monaco Editor · vitest · Playwright（视觉回归截图基线）
