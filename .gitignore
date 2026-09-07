@@ -30,8 +30,9 @@ dist/
 .DS_Store
 
 # 视觉回归截图：只入库 v1-old（改造前冻结参照），其余为运行产物
-tests/screenshots/*
-!tests/screenshots/v1-old/
+# 注意：含斜杠的模式锚定 .gitignore 所在目录，必须写全 frontend/ 前缀
+frontend/tests/screenshots/*
+!frontend/tests/screenshots/v1-old/
 playwright-report/
 .idea/
 .vscode/
