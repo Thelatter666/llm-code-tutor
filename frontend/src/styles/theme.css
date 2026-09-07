@@ -21,6 +21,31 @@
   --color-on-destructive: #ffffff;
   --color-ring: #7c3aed;
 
+  /* v2 扩展（spec §3）：层级阴影替代「只有边框没有层级」的旧观感 */
+  --color-border-strong: #c4b5fd;
+  --color-overlay: rgb(30 27 75 / 0.45);
+  --shadow-e1: 0 1px 2px rgb(30 27 75 / 0.06);
+  --shadow-e2: 0 2px 8px rgb(30 27 75 / 0.08);
+  --shadow-e3: 0 8px 24px rgb(30 27 75 / 0.12);
+  --shadow-e4: 0 16px 48px rgb(30 27 75 / 0.16);
+
+  /* v2 扩展：字阶 */
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-base: 14px;
+  --fs-md: 16px;
+  --fs-lg: 18px;
+  --fs-xl: 22px;
+  --fs-2xl: 28px;
+  --lh-tight: 1.3;
+  --lh-normal: 1.6;
+
+  /* v2 扩展：动效 */
+  --duration-fast: 150ms;
+  --duration-base: 200ms;
+  --duration-slow: 300ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
   --el-color-primary: var(--color-primary);
   --el-color-success: #16a34a;
   --el-color-warning: #d97706;
@@ -35,8 +60,10 @@
   --el-fill-color-light: var(--color-muted);
   --el-border-radius-base: 8px;
 
-  --font-sans: Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei',
+  --font-app: Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei',
     sans-serif;
+  /* 兼容旧引用：既有页面仍在使用 --font-sans */
+  --font-sans: var(--font-app);
 
   /* 基线 §4 间距：4px 基础单位，按 4 / 8 / 12 / 16 / 24 / 32 递进 */
   --space-1: 4px;
@@ -50,6 +77,7 @@
   --radius-control: 8px;
   --radius-card: 12px;
   --radius-dialog: 16px;
+  --radius-pill: 999px;
 
   /* 基线 §4 页面外边距：≥1024px 用 24px，<768px 用 16px */
   --page-gutter: 24px;
