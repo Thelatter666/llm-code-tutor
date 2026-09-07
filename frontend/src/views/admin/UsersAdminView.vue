@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import * as adminApi from '@/api/admin'
+import { useConfirm } from '@/composables/useConfirm'
+import { useNotify } from '@/composables/useNotify'
+import { usePagedList } from '@/composables/usePagedList'
 import type { AdminUserOut } from '@/types/admin'
-import { Delete, Plus, RefreshLeft } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { onMounted, reactive, ref } from 'vue'
+import { reactive, ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
+import { UiBadge, UiButton, UiCard, UiDialog, UiIcon, UiInput, UiSelect } from '@/ui'
 
 /**
  * 用户管理页（spec §6.2 admin 行 / §8.9，P6 Task 9）。
@@ -17,44 +19,50 @@ import { useAuthStore } from '@/stores/auth'
  */
 
 const auth = useAuthStore()
-const items = ref<AdminUserOut[]>([])
-const total = ref(0)
-const loading = ref(false)
+const notify = useNotify()
+const confirm = useConfirm()
 
 const filters = reactive({
   q: '',
   role: '' as 'student' | 'admin' | '',
   status: '' as 'active' | 'disabled' | '',
-  page: 1,
   pageSize: 10,
 })
 
-async function load() {
-  loading.value = true
-  try {
-    const { data } = await adminApi.listAdminUsers({
-      q: filters.q || undefined,
-      role: filters.role || undefined,
-      status: filters.status || undefined,
-      page: filters.page,
-      pageSize: filters.pageSize,
-    })
-    items.value = data.data?.items ?? []
-    total.value = data.data?.total ?? 0
-  } finally {
-    loading.value = false
-  }
-}
+const list = usePagedList<AdminUserOut>(async (page, pageSize) => {
+  const { data } = await adminApi.listAdminUsers({
+    q: filters.q || undefined,
+    role: filters.role || undefined,
+    status: filters.status || undefined,
+    page,
+    pageSize,
+  })
+  return { items: data.data?.items ?? [], total: data.data?.total ?? 0 }
+}, filters.pageSize)
 
 function search() {
-  filters.page = 1
-  load()
+  list.reset()
 }
 
+function onPageSize(size: number) {
+  filters.pageSize = size
+  search()
+}
+
+/** UTC 直读，不做本地化换算 —— 演示机上标了时区反而容易误读。 */
 function formatTime(iso: string | null): string {
   if (!iso) return '—'
   return `${iso.slice(0, 16).replace('T', ' ')} UTC`
 }
+
+const ROLE_OPTIONS = [
+  { label: '学生', value: 'student' },
+  { label: '管理员', value: 'admin' },
+]
+const STATUS_OPTIONS = [
+  { label: '正常', value: 'active' },
+  { label: '已停用', value: 'disabled' },
+]
 
 // ---------------------------------------------------------------- 新建
 
@@ -74,15 +82,15 @@ function openCreate() {
 
 async function submitCreate() {
   if (!createForm.username.trim() || !createForm.email.trim() || !createForm.password) {
-    ElMessage.warning('请完整填写用户名、邮箱与密码')
+    notify.warning('请完整填写用户名、邮箱与密码')
     return
   }
   creating.value = true
   try {
     await adminApi.createAdminUser({ ...createForm })
-    ElMessage.success('用户已创建')
+    notify.success('用户已创建')
     createDialog.value = false
-    await load()
+    await list.load()
   } catch {
     // 错误消息已由拦截器弹出
   } finally {
@@ -116,15 +124,15 @@ async function submitEdit() {
   if (editForm.status) body.status = editForm.status
   if (editForm.password) body.password = editForm.password
   if (!Object.keys(body).length) {
-    ElMessage.warning('没有要保存的变更')
+    notify.warning('没有要保存的变更')
     return
   }
   editing.value = true
   try {
     await adminApi.updateAdminUser(editForm.id, body)
-    ElMessage.success('已保存')
+    notify.success('已保存')
     editDialog.value = false
-    await load()
+    await list.load()
   } catch {
     // 自停用/自降权等 4220 消息由拦截器弹出
   } finally {
@@ -136,18 +144,17 @@ async function submitEdit() {
 async function toggleStatus(row: AdminUserOut) {
   const target = row.status === 'active' ? 'disabled' : 'active'
   const actionText = target === 'disabled' ? '停用' : '启用'
-  const confirmed = await ElMessageBox.confirm(
+  const confirmed = await confirm(
     target === 'disabled'
       ? `停用后「${row.username}」将无法登录，已有登录态立即失效；数据全部保留，可随时重新启用。`
       : `重新启用「${row.username}」，恢复登录能力。`,
     `${actionText}用户`,
-    { type: 'warning', confirmButtonText: actionText, cancelButtonText: '取消' },
-  ).catch(() => null)
+  )
   if (!confirmed) return
   try {
     await adminApi.updateAdminUser(row.id, { status: target })
-    ElMessage.success(`已${actionText}`)
-    await load()
+    notify.success(`已${actionText}`)
+    await list.load()
   } catch {
     // 后端 4220（自停用等）消息由拦截器弹出
   }
@@ -157,173 +164,156 @@ async function toggleStatus(row: AdminUserOut) {
 
 async function removeUser(row: AdminUserOut) {
   if (row.id === auth.user?.id) {
-    ElMessage.warning('不能删除当前登录的管理员')
+    notify.warning('不能删除当前登录的管理员')
     return
   }
-  const confirmed = await ElMessageBox.confirm(
-    `硬删除「${row.username}」将级联清除其全部会话、消息、提交、错题条目、代码会话、` +
-      '代码分析、代码运行记录，且**不可恢复**；审计日志一律保留。',
+  const confirmed = await confirm(
+    `硬删除「${row.username}」将级联清除其全部会话、消息、提交、错题条目、代码会话、代码分析、代码运行记录，且不可恢复；审计日志一律保留。`,
     '硬删除用户',
-    { type: 'error', confirmButtonText: '硬删除', cancelButtonText: '取消' },
-  ).catch(() => null)
+  )
   if (!confirmed) return
   try {
     await adminApi.deleteAdminUser(row.id)
-    ElMessage.success('用户已硬删除')
-    await load()
+    notify.success('用户已硬删除')
+    await list.load()
   } catch {
     // 后端 4220（末位管理员等）消息由拦截器弹出
   }
 }
 
-onMounted(load)
+list.load()
 </script>
 
 <template>
-  <div class="users-page">
-    <div class="users-page__toolbar">
-      <el-input
-        v-model="filters.q"
-        placeholder="搜索用户名 / 邮箱"
-        clearable
-        class="users-page__search"
-        @keyup.enter="search"
-        @clear="search"
-      />
-      <el-select v-model="filters.role" placeholder="全部角色" clearable class="users-page__select" @change="search">
-        <el-option label="学生" value="student" />
-        <el-option label="管理员" value="admin" />
-      </el-select>
-      <el-select v-model="filters.status" placeholder="全部状态" clearable class="users-page__select" @change="search">
-        <el-option label="正常" value="active" />
-        <el-option label="已停用" value="disabled" />
-      </el-select>
-      <el-button type="primary" :icon="RefreshLeft" @click="search">刷新</el-button>
-      <el-button type="primary" :icon="Plus" @click="openCreate">新建用户</el-button>
-    </div>
+  <div class="flex flex-col gap-4">
+    <UiCard :padded="false">
+      <div class="flex flex-wrap items-center gap-2 border-b border-line p-3">
+        <UiInput v-model="filters.q" placeholder="搜索用户名 / 邮箱" class="w-[240px]" @keyup.enter="search" />
+        <UiSelect v-model="filters.role" :options="ROLE_OPTIONS" placeholder="全部角色" clearable class="w-[140px]" @update:model-value="search" />
+        <UiSelect v-model="filters.status" :options="STATUS_OPTIONS" placeholder="全部状态" clearable class="w-[140px]" @update:model-value="search" />
+        <UiButton variant="secondary" @click="search">
+          <UiIcon name="RotateCcw" :size="14" />刷新
+        </UiButton>
+        <UiButton @click="openCreate">
+          <UiIcon name="Plus" :size="14" />新建用户
+        </UiButton>
+      </div>
 
-    <el-table v-loading="loading" :data="items" class="users-page__table">
-      <el-table-column prop="username" label="用户名" min-width="120" />
-      <el-table-column prop="email" label="邮箱" min-width="200" />
-      <el-table-column label="角色" width="100">
-        <template #default="{ row }">
-          <el-tag :type="row.role === 'admin' ? 'warning' : 'primary'" effect="plain">
-            {{ row.role === 'admin' ? '管理员' : '学生' }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="状态" width="100">
-        <template #default="{ row }">
-          <el-tag :type="row.status === 'active' ? 'success' : 'danger'" effect="plain">
-            {{ row.status === 'active' ? '正常' : '已停用' }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="创建时间" width="150">
-        <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
-      </el-table-column>
-      <el-table-column label="最近登录" width="150">
-        <template #default="{ row }">{{ formatTime(row.last_login_at) }}</template>
-      </el-table-column>
-      <el-table-column label="操作" width="240" fixed="right">
-        <template #default="{ row }">
-          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button
-            link
-            :type="row.status === 'active' ? 'danger' : 'success'"
-            :disabled="row.id === auth.user?.id"
-            @click="toggleStatus(row)"
-          >
-            {{ row.status === 'active' ? '停用' : '启用' }}
-          </el-button>
-          <el-button
-            link
-            type="danger"
-            :disabled="row.id === auth.user?.id"
-            @click="removeUser(row)"
-          >
-            硬删除
-          </el-button>
-        </template>
-      </el-table-column>
-    </el-table>
+      <div v-loading="list.loading.value" class="overflow-auto">
+        <table class="w-full text-sm">
+          <thead class="text-xs text-muted-ink">
+            <tr>
+              <th class="px-3 py-2 text-left font-medium">用户名</th>
+              <th class="px-3 py-2 text-left font-medium">邮箱</th>
+              <th class="px-3 py-2 text-left font-medium">角色</th>
+              <th class="px-3 py-2 text-left font-medium">状态</th>
+              <th class="px-3 py-2 text-left font-medium">创建时间</th>
+              <th class="px-3 py-2 text-left font-medium">最近登录</th>
+              <th class="px-3 py-2 text-left font-medium">操作</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-line">
+            <tr v-for="row in list.items.value" :key="row.id" class="hover:bg-softer">
+              <td class="px-3 py-2 font-medium text-ink">{{ row.username }}</td>
+              <td class="px-3 py-2 text-muted-ink">{{ row.email }}</td>
+              <td class="px-3 py-2">
+                <UiBadge :variant="row.role === 'admin' ? 'warning' : 'primary'">
+                  {{ row.role === 'admin' ? '管理员' : '学生' }}
+                </UiBadge>
+              </td>
+              <td class="px-3 py-2">
+                <UiBadge :variant="row.status === 'active' ? 'success' : 'danger'">
+                  {{ row.status === 'active' ? '正常' : '已停用' }}
+                </UiBadge>
+              </td>
+              <td class="px-3 py-2 whitespace-nowrap text-muted-ink">{{ formatTime(row.created_at) }}</td>
+              <td class="px-3 py-2 whitespace-nowrap text-muted-ink">{{ formatTime(row.last_login_at) }}</td>
+              <td class="px-3 py-2">
+                <div class="flex flex-wrap gap-1">
+                  <UiButton variant="link" size="sm" @click="openEdit(row)">编辑</UiButton>
+                  <UiButton
+                    variant="link"
+                    size="sm"
+                    :disabled="row.id === auth.user?.id"
+                    @click="toggleStatus(row)"
+                  >
+                    {{ row.status === 'active' ? '停用' : '启用' }}
+                  </UiButton>
+                  <UiButton variant="link" size="sm" :disabled="row.id === auth.user?.id" @click="removeUser(row)">
+                    硬删除
+                  </UiButton>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
-    <el-pagination
-      v-model:current-page="filters.page"
-      v-model:page-size="filters.pageSize"
-      :total="total"
-      :page-sizes="[10, 20, 50]"
-      layout="total, sizes, prev, pager, next"
-      class="users-page__pager"
-      @current-change="load"
-      @size-change="search"
-    />
+      <div class="p-3">
+        <UiPagination
+          :page="list.page.value"
+          :total="list.total.value"
+          :page-size="filters.pageSize"
+          :page-sizes="[10, 20, 50]"
+          layout="total, sizes, prev, pager, next"
+          @update:page="list.goto"
+          @update:page-size="onPageSize"
+        />
+      </div>
+    </UiCard>
 
-    <el-dialog v-model="createDialog" title="新建用户" width="420px">
-      <el-form label-width="80px" @submit.prevent>
-        <el-form-item label="用户名"><el-input v-model="createForm.username" /></el-form-item>
-        <el-form-item label="邮箱"><el-input v-model="createForm.email" /></el-form-item>
-        <el-form-item label="密码">
-          <el-input v-model="createForm.password" type="password" show-password placeholder="至少 8 位" />
-        </el-form-item>
-        <el-form-item label="角色">
-          <el-select v-model="createForm.role">
-            <el-option label="学生" value="student" />
-            <el-option label="管理员" value="admin" />
-          </el-select>
-        </el-form-item>
-      </el-form>
+    <UiDialog v-model="createDialog" title="新建用户" width="420px">
+      <form class="flex flex-col gap-3" @submit.prevent>
+        <div class="flex flex-col gap-1">
+          <label class="text-sm text-muted-ink">用户名</label>
+          <UiInput v-model="createForm.username" />
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="text-sm text-muted-ink">邮箱</label>
+          <UiInput v-model="createForm.email" type="email" />
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="text-sm text-muted-ink">密码</label>
+          <UiInput v-model="createForm.password" type="password" placeholder="至少 8 位" />
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="text-sm text-muted-ink">角色</label>
+          <UiSelect v-model="createForm.role" :options="ROLE_OPTIONS" />
+        </div>
+      </form>
       <template #footer>
-        <el-button @click="createDialog = false">取消</el-button>
-        <el-button type="primary" :loading="creating" @click="submitCreate">创建</el-button>
+        <UiButton variant="secondary" @click="createDialog = false">取消</UiButton>
+        <UiButton :loading="creating" @click="submitCreate">创建</UiButton>
       </template>
-    </el-dialog>
+    </UiDialog>
 
-    <el-dialog v-model="editDialog" title="编辑用户" width="420px">
-      <el-form label-width="80px" @submit.prevent>
-        <el-form-item label="用户名"><el-input :model-value="editForm.username" disabled /></el-form-item>
-        <el-form-item label="邮箱"><el-input v-model="editForm.email" /></el-form-item>
-        <el-form-item label="角色">
-          <el-select v-model="editForm.role" :disabled="editForm.id === auth.user?.id">
-            <el-option label="学生" value="student" />
-            <el-option label="管理员" value="admin" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-select v-model="editForm.status" :disabled="editForm.id === auth.user?.id">
-            <el-option label="正常" value="active" />
-            <el-option label="已停用" value="disabled" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="重置密码">
-          <el-input v-model="editForm.password" type="password" show-password placeholder="留空则不修改" />
-        </el-form-item>
-      </el-form>
+    <UiDialog v-model="editDialog" title="编辑用户" width="420px">
+      <form class="flex flex-col gap-3" @submit.prevent>
+        <div class="flex flex-col gap-1">
+          <label class="text-sm text-muted-ink">用户名</label>
+          <UiInput :model-value="editForm.username" disabled />
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="text-sm text-muted-ink">邮箱</label>
+          <UiInput v-model="editForm.email" type="email" />
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="text-sm text-muted-ink">角色</label>
+          <UiSelect v-model="editForm.role" :options="ROLE_OPTIONS" :disabled="editForm.id === auth.user?.id" />
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="text-sm text-muted-ink">状态</label>
+          <UiSelect v-model="editForm.status" :options="STATUS_OPTIONS" :disabled="editForm.id === auth.user?.id" />
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="text-sm text-muted-ink">重置密码</label>
+          <UiInput v-model="editForm.password" type="password" placeholder="留空则不修改" />
+        </div>
+      </form>
       <template #footer>
-        <el-button @click="editDialog = false">取消</el-button>
-        <el-button type="primary" :loading="editing" @click="submitEdit">保存</el-button>
+        <UiButton variant="secondary" @click="editDialog = false">取消</UiButton>
+        <UiButton :loading="editing" @click="submitEdit">保存</UiButton>
       </template>
-    </el-dialog>
+    </UiDialog>
   </div>
 </template>
-
-<style scoped>
-.users-page__toolbar {
-  display: flex;
-  gap: var(--space-2);
-  margin-bottom: var(--space-4);
-  flex-wrap: wrap;
-}
-
-.users-page__search {
-  width: 240px;
-}
-
-.users-page__select {
-  width: 140px;
-}
-
-.users-page__pager {
-  margin-top: var(--space-4);
-}
-</style>
